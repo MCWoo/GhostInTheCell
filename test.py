@@ -40,32 +40,41 @@ class Troop:
 class MinFactoryDistances:
     def __init__(self, num_factories):
         self.__min_distances = [[math.inf for n in range(num_factories)] for m in range(num_factories)]
+        self.__predecessors = [[-1 for n in range(num_factories)] for m in range(num_factories)]
         self.__num_factories = num_factories
 
     def create_edge(self, u, v, dist):
         self.__min_distances[u][v] = dist
+        self.__predecessors[u][v] = u   # identity
 
     def get_distance(self, u, v):
         return self.__min_distances[u][v]
 
     # Floyd-Warshall algorithm
     def calculate(self):
-        # Do algorithm
-        self.__min_distances
         for k in range(self.__num_factories):
             for u in range(self.__num_factories):
                 for v in range(self.__num_factories):
                     if self.__min_distances[u][v] > (self.__min_distances[u][k] + self.__min_distances[k][v]):
                         self.__min_distances[u][v] = self.__min_distances[u][k] + self.__min_distances[k][v]
-        return None
+                        self.__predecessors[u][v] = self.__predecessors[k][v]       # Take the predecessor from k to v
+
+    # Shortest path from u to v
+    def get_path(self, u, v):
+        path = []
+        k = v
+        while k != -1:      # -1 default predecessor for (u,u)
+            path.append(k)
+            k = self.__predecessors[u,k]
+        return path.reverse()
 
 
 # Holds the game state
 class GameState:
-    def __init__(self):
+    def __init__(self, num_factories):
         self.factories = {}     # id -> Factory Node
         self.troops = {}
-        self.min_distances = None
+        self.min_distances = MinFactoryDistances(num_factories)
 
     # Change the data for a given factory
     def update_factory(self, factory_id, owner, num_cyborgs, cyborg_rate):
@@ -128,7 +137,7 @@ class GameState:
                 num_cyborgs += (troops[0].time_left - last_check) * cyborg_rate
 
             # resolve multiple troops fighting
-            t1 = t2 = troop_owner = troop_cyborgs = 0
+            t1 = t2 = 0
             for troop_id in troops:
                 if self.troops[troop_id].owner == -1:
                     t1 += self.troops[troop_id].num_cyborgs
@@ -175,7 +184,7 @@ for i in range(link_count):
     min_distances.create_edge(factory_1, factory_2, distance)
     min_distances.create_edge(factory_2, factory_1, distance)       # Undirected
 
-min_distances.calculate()
+game_state.min_distances.calculate()
 
 # game loop
 while True:
