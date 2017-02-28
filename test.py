@@ -42,9 +42,10 @@ class Troop:
 
 class MinFactoryDistances:
     def __init__(self, num_factories):
-        self.__min_distances = [[math.inf for n in range(num_factories)] for m in range(num_factories)]
+        self.__min_distances = [[(math.inf if m != n else 0) for n in range(num_factories)] for m in range(num_factories)]
         self.__predecessors = [[-1 for n in range(num_factories)] for m in range(num_factories)]
         self.__num_factories = num_factories
+        self.__cached_paths = {}    # (u,v) -> [path]
 
     def create_edge(self, u, v, dist):
         self.__min_distances[u][v] = dist
@@ -55,24 +56,33 @@ class MinFactoryDistances:
 
     # Floyd-Warshall algorithm
     def calculate(self):
-        print("Starting min distance calculations...", file=sys.stderr)
+        # print("Min dist: {}".format(self.__min_distances))
+        # print("Starting min distance calculations...", file=sys.stderr)
         for k in range(self.__num_factories):
             for u in range(self.__num_factories):
                 for v in range(self.__num_factories):
                     if self.__min_distances[u][v] > (self.__min_distances[u][k] + self.__min_distances[k][v]):
                         self.__min_distances[u][v] = self.__min_distances[u][k] + self.__min_distances[k][v]
                         self.__predecessors[u][v] = self.__predecessors[k][v]       # Take the predecessor from k to v
-        print("Finished!", file=sys.stderr)
+        # print("Min dist: {}".format(self.__min_distances))
+        # print("Finished!", file=sys.stderr)
 
     # Shortest path from u to v
-    def get_path(self, u, v):
-        print("Getting path from {} to {}".format(u, v), file=sys.stderr)
+    def __get_path(self, u, v):
         path = []
         k = v
         while k != -1:      # -1 default predecessor for (u,u)
             path.append(k)
             k = self.__predecessors[u][k]
-        return path.reverse()
+        return path[::-1]
+
+    def cache_all_paths(self):
+        for u in range(self.__num_factories):
+            for v in range(self.__num_factories):
+                self.__cached_paths[(u, v)] = self.__get_path(u, v)
+
+    def get_cached_path(self, u, v):
+        return self.__cached_paths[(u, v)]
 
 
 # Holds the game state
@@ -84,8 +94,6 @@ class GameState:
 
     # Change the data for a given factory
     def update_factory(self, factory_id, owner, num_cyborgs, cyborg_rate):
-        if factory_id not in self.factories:
-            print("Error! Factory {} not in game state!".format(factory_id), file=sys.stderr)
         factory = self.factories[factory_id]
         factory.owner = owner
         factory.num_cyborgs = num_cyborgs
@@ -100,16 +108,7 @@ class GameState:
                                           destination=destination,
                                           time_left=time_left)
             return
-        troop = self.troops[troop_id]
-        if troop.owner != owner:
-            print("Error! Troop owner mismatch: {} vs {}".format(troop, owner), file=sys.stderr)
-        if troop.num_cyborgs != num_cyborgs:
-            print("Error! Troop cyborg # mismatch: {} vs {}".format(troop, num_cyborgs), file=sys.stderr)
-        if troop.source != source:
-            print("Error! Troop source mismatch: {} vs {}".format(troop, source), file=sys.stderr)
-        if troop.destination != destination:
-            print("Error! Troop destination mismatch: {} vs {}".format(troop, destination), file=sys.stderr)
-        troop.time_left = time_left     # Should be the only thing to change
+        self.troops[troop_id].time_left = time_left
 
     # Get all factories that a player owns
     def get_player_factories(self, player_id):
@@ -196,6 +195,7 @@ for i in range(link_count):
     game_state.min_distances.create_edge(factory_2, factory_1, distance)       # Undirected
 
 game_state.min_distances.calculate()
+game_state.min_distances.cache_all_paths()
 
 # game loop
 while True:
@@ -220,19 +220,24 @@ while True:
                                     source=arg_2,
                                     destination=arg_3,
                                     time_left=arg_5)
-        else:
-            print("Error! Bad input: {}".format(entity_type), file=sys.stderr)
+        elif entity_type == "BOMB":
+            print("BOMB", file=sys.stderr)
 
-    print("Filtering factory", file=sys.stderr)
+    # print("Filtering factory", file=sys.stderr)
     filtered_list = game_state.get_filtered_factory_list()
+    print("Filtered list: {}".format(filtered_list), file=sys.stderr)
     if not filtered_list:
         filtered_list = game_state.get_compliment_filtered_list()
+        print("Filtered list: {}".format(filtered_list), file=sys.stderr)
 
-    print("Getting my factories", file=sys.stderr)
+    # print("Getting my factories", file=sys.stderr)
     myfactories = game_state.get_player_factories(PLAYER_ID_SELF)
+    if not myfactories:
+        print("WAIT")
+        continue
 
     source_factory_id = max(myfactories, key=lambda x: game_state.factories[x].num_cyborgs)
-    print("Source: {}".format(source_factory_id), file=sys.stderr)
+    # print("Source: {}".format(source_factory_id), file=sys.stderr)
     target_factory_id = -1
     num_cyborgs = 0
     source_factory = game_state.factories[source_factory_id]
@@ -242,57 +247,12 @@ while True:
         if game_state.factories[factory].num_cyborgs < source_factory.num_cyborgs:
             distance = game_state.min_distances.get_distance(source_factory.id, factory)
             if distance < closest_dist:
-                print("Closer: {}, dist: {}".format(factory, distance), file=sys.stderr)
+                print("Distance ({}, {}): {}".format(source_factory_id, factory, distance), file=sys.stderr)
                 target_factory_id = factory
                 closest_distance = distance
-                num_cyborgs = game_state.factories[factory].num_cyborgs + game_state.factories[factory].cyborg_rate*distance
+                num_cyborgs = game_state.factories[factory].num_cyborgs + game_state.factories[factory].cyborg_rate*distance + 1
     if target_factory_id == -1:
         print("WAIT")
     else:
-        print("MOVE {} {} {}".format(source_factory_id, target_factory_id, num_cyborgs))
-
-    # def closest_able(factoryid):
-    #     closest_dist = math.inf
-    #     closest_factory_id = -1
-    #     cyborgs_needed = math.inf
-    #     for myfactory in myfactories:
-    #         distance = game_state.min_distances.get_distance(myfactory, factoryid)
-    #         cyborgs_needed = game_state.factories[factoryid].num_cyborgs #game_state.cyborgs_at_factory(factoryid, distance) + 1
-    #         if game_state.factories[myfactory].num_cyborgs >= cyborgs_needed  and \
-    #                         distance < closest_dist:
-    #             closest_dist = distance
-    #             closest_factory_id = myfactory
-    #     return closest_dist, closest_factory_id, cyborgs_needed
-
-    # print("Mapping closest factories", file=sys.stderr)
-    # paths = list(map(closest_able, priority_sorted))
-    # paths.sort(key=lambda x: x[0])
-    # for i in range(len(filtered_list)):
-    #     target = filtered_list[i]
-    #     dist, factoryid, cyborgs = closest_able(target)
-    #     filtered_list[i] = (target, dist, factoryid, cyborgs)
-
-    # closest_dist = math.inf
-    # source_factory = None
-    # send_cyborgs = 0
-    # target_factory = None
-    # print("Finding closest path", file=sys.stderr)
-    # answer = min(filtered_list, key=lambda x: x[1])
-    # for target, dist, source, cyborgs in filtered_list:
-    #     if dist < closest_dist:
-    #         print("Closest path found!", file=sys.stderr)
-    #         source_factory = source
-    #         target_factory = target
-    #         send_cyborgs = cyborgs
-    #         break
-    # if not answer:  # source_factory:
-    #     print("WAIT")
-    #     continue
-    #
-    # path = game_state.min_distances.get_path(u=answer[2], v=answer[0])
-    # print("MOVE {} {} {}".format(path[0], path[1], send_cyborgs))
-
-    # Write an action using print
-    # To debug: print("Debug messages...", file=sys.stderr)
-
-    # Any valid action, such as "WAIT" or "MOVE source destination cyborgs"
+        path = game_state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
+        print("MOVE {} {} {}".format(path[0], path[1], num_cyborgs))
