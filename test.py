@@ -2,6 +2,7 @@ import sys
 import math
 
 PLAYER_ID_SELF = 1
+PLAYER_ID_NEUTRAL = 0
 PLAYER_ID_OPPONENT = -1
 
 
@@ -244,13 +245,16 @@ while True:
     closest_dist = math.inf
 
     for factory in filtered_list:
-        if game_state.factories[factory].num_cyborgs < source_factory.num_cyborgs:
-            distance = game_state.min_distances.get_distance(source_factory.id, factory)
+        rate = game_state.factories[factory].cyborg_rate
+        distance = game_state.min_distances.get_distance(source_factory.id, factory)
+        cyborgs_needed = game_state.factories[factory].num_cyborgs + 1\
+            + (game_state.factories[factory].owner != PLAYER_ID_NEUTRAL)*rate*(distance+1)
+        if cyborgs_needed < source_factory.num_cyborgs:
             if distance < closest_dist:
-                print("Distance ({}, {}): {}".format(source_factory_id, factory, distance), file=sys.stderr)
+                # print("Distance ({}, {}): {}".format(source_factory_id, factory, distance), file=sys.stderr)
                 target_factory_id = factory
                 closest_distance = distance
-                num_cyborgs = game_state.factories[factory].num_cyborgs + game_state.factories[factory].cyborg_rate*distance + 1
+                num_cyborgs = cyborgs_needed
     if target_factory_id == -1:
         print("WAIT")
     else:
