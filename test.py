@@ -1,9 +1,42 @@
 import sys
 import math
 
+import datetime
+
 PLAYER_ID_SELF = 1
 PLAYER_ID_NEUTRAL = 0
 PLAYER_ID_OPPONENT = -1
+
+
+#################################################################################
+class Timer:
+    __id = 0
+
+    def __init__(self):
+        self.__timers = {}    # id -> datetime
+
+    def reserve_id(self):
+        return self.__id
+
+    def start(self, i=__id):
+        self.__timers[i] = datetime.datetime.now()
+        if i == self.__id:
+            self.__id += 1
+        return i
+
+    def stop(self, i):
+        delta = self.delta(i)
+        del self.__timers[i]
+        return delta
+
+    def delta(self, i):
+        return datetime.datetime.now() - self.__timers[i]
+
+    def clear(self, i):
+        if i in self.__timers:
+            del self.__timers[i]
+
+timer = Timer()
 
 
 # Factory related data
@@ -179,7 +212,7 @@ class GameState:
     def get_compliment_filtered_list(self):
         return [factory for factory in self.factories if self.factories[factory].cyborg_rate == 0 and self.factories[factory].owner != PLAYER_ID_SELF]
 
-
+init_timer = timer.start()
 factory_count = int(input())  # the number of factories
 link_count = int(input())  # the number of links between factories
 
@@ -198,9 +231,15 @@ for i in range(link_count):
 game_state.min_distances.calculate()
 game_state.min_distances.cache_all_paths()
 
+delta = timer.stop(init_timer)
+print("{:.2f} ms spent initializing".format(delta.microseconds / 1000.0), file=sys.stderr)
+loop_timer = timer.reserve_id()
+
 # game loop
 while True:
     print("Starting turn...", file=sys.stderr)
+
+    timer.start(loop_timer)
     entity_count = int(input())  # the number of entities (e.g. factories and troops)
     for i in range(entity_count):
         line = input()
@@ -260,3 +299,5 @@ while True:
     else:
         path = game_state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
         print("MOVE {} {} {}".format(path[0], path[1], num_cyborgs))
+    delta = timer.delta(loop_timer)
+    print("{:.2f} ms spent on turn".format(delta.microseconds / 1000.0), file=sys.stderr)
