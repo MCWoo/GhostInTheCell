@@ -262,8 +262,16 @@ class GameState:
             self.troops[dst] = {troop_id: troop}
             return
         self.troops[dst][troop_id] = troop
-        if time_left == 0:
-            print("Troop with 0 time left! {}".format(troop), file=sys.stderr)
+
+        if troop.owner == PLAYER_ID_SELF:
+            for command in self.future_commands:
+                if troop.dst == command.src and troop.time_left == command.time_left:
+                    print("Troop matches command!", file=sys.stderr)
+
+    def update_after_move(self, src, dst, num_cyborgs):
+        self.factories[src].num_cyborgs -= num_cyborgs
+        self.perceived_factories[src].num_cyborgs -= num_cyborgs
+        self.perceived_factories[dst].num_cyborgs += num_cyborgs
 
     def calculate_perception(self):
         for dst in self.troops:
@@ -294,7 +302,21 @@ class GameState:
                     delta *= -1
 
                 factory.num_cyborgs += factory.cyborg_rate*(troop.time_left-last_update)
+                factory.num_cyborgs += delta
+                # Ownership change perceived
+                if factory.num_cyborgs < 0:
+                    factory.num_cyborgs *= -1
+                    if factory.owner == PLAYER_ID_NEUTRAL:
+                        if delta != 0:
+                            factory.owner = delta / abs(delta)
+                    else:
+                        factory.owner *= -1
                 last_update = troop.time_left
+
+    def set_future_command(self, index, src, time_left):
+        self.future_commands[index].src = src
+        self.future_commands[index].time_left = time_left
+        # update perception
 
     # Update all future commands
     def tick_commands(self):
@@ -317,11 +339,21 @@ class GameState:
         return sorted([factory for factory in self.factories if self.factories[factory].cyborg_rate != 0],
                       key=lambda x: self.factories[x].cyborg_rate, reverse=True)
 
-    def get_filtered_factory_list(self):
-        return [factory for factory in self.factories if self.factories[factory].cyborg_rate != 0 and self.factories[factory].owner != PLAYER_ID_SELF]
+    def get_target_factory_list(self):
+        return [factory for factory in self.factories if self.factories[factory].cyborg_rate != 0
+                and self.factories[factory].owner != PLAYER_ID_SELF]
 
     def get_compliment_filtered_list(self):
-        return [factory for factory in self.factories if self.factories[factory].cyborg_rate == 0 and self.factories[factory].owner != PLAYER_ID_SELF]
+        return [factory for factory in self.factories if self.factories[factory].cyborg_rate == 0
+                and self.factories[factory].owner != PLAYER_ID_SELF]
+
+    def get_perceived_target_factory_list(self):
+        return [factory for factory in self.perceived_factories if self.perceived_factories[factory].cyborg_rate != 0
+                and self.perceived_factories[factory].owner != PLAYER_ID_SELF]
+
+    def get_perceived_compliment_filtered_list(self):
+        return [factory for factory in self.perceived_factories if self.perceived_factories[factory].cyborg_rate == 0
+                and self.perceived_factories[factory].owner != PLAYER_ID_SELF]
 
     def cyborgs_on_path(self, u, v):
         path = self.min_distances.get_cached_path(u, v)
@@ -400,27 +432,30 @@ def game_loop(state, msg_generator):
         # Check commands to execute
         for i in range(len(state.future_commands)):
             cmd = state.future_commands[i]
-            if cmd and cmd.time_left < 0:
+            cyborgs_needed = state.cyborgs_on_path(cmd.src, cmd.dst) + 1
+            if cmd.time_left < 0:
                 if state.factories[cmd.src].owner == PLAYER_ID_OPPONENT:
                     state.future_commands[i] = None
                     continue
-                cyborgs_needed = state.cyborgs_on_path(cmd.src, cmd.dst) + 1
                 if state.factories[cmd.src].num_cyborgs >= cyborgs_needed:
                     path = state.min_distances.get_cached_path(cmd.src, cmd.dst)
                     game_cmd += ";{} {} {} {}".format(CMD_MOVE, cmd.src, path[1], cyborgs_needed)
-                    state.factories[cmd.src].num_cyborgs -= cyborgs_needed
+                    state.update_after_move(cmd.src, path[1], cyborgs_needed)
                     if len(path) > 2:
-                        state.future_commands[i].src = path[1]
-                        state.future_commands[i].time_left = state.get_edge(cmd.src, path[1])
+                        state.set_future_command(i, path[1], state.get_edge(cmd.src, path[1]))
                     else:
                         state.future_commands[i] = None
                 else:
                     state.future_commands[i] = None
+            else:
+                if state.perceived_factories[cmd.src].num_cyborgs >= cyborgs_needed:
+                    # update perception map
+                    print("", file=sys.stderr)
 
         state.prune_commands()
 
         # print("Filtering factory", file=sys.stderr)
-        filtered_list = state.get_filtered_factory_list()
+        filtered_list = state.get_target_factory_list()
         # print("Filtered list: {}".format(filtered_list), file=sys.stderr)
         if not filtered_list:
             filtered_list = state.get_compliment_filtered_list()
