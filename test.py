@@ -1,3 +1,4 @@
+import random
 import sys
 import math
 
@@ -10,6 +11,66 @@ PLAYER_ID_OPPONENT = -1
 CMD_MOVE = "MOVE"
 CMD_WAIT = "WAIT"
 CMD_BOMB = "BOMB"
+
+
+#################################################################################
+class MessageGenerator:
+    __msg_sets = []
+    __dork_msgs = ["Mommy said not to talk to  strangers...",
+                   "Where to go...                               IDK my BFF Jill?",
+                   "Quickly, it's past my                   bedtime!",
+                   "I made this with my tears    TT_TT",
+                   "Shhh, I'm not supposed to   be on the computer!",
+                   "I'm not a robot!",]
+    __inspirational_msgs = ["Be the change you wish to   see.",
+                            "WWJD?",
+                            "Love is patient,                             love is kind",
+                            "It is never too late to be      what you might have been.",
+                            "To love at all is to be                vulnerable.",
+                            "A journey of a thousand     miles begins with one step."]
+    __obnoxious_msgs = ["R U SRS??",
+                        "LOL",
+                        "ROFLROFLROFLROFLROFLROFLROFL",
+                        "Is that even a real                      strategy??",
+                        "Are you dead yet??",
+                        "You. Should. Have. Bought. A. Squirrel.",
+                        "GG no re.",
+                        "You're done.",
+                        "Can you just give up?",
+                        "Wat",
+                        "/surrender pls",
+                        "Hey, alt + f4 gives you an     extra bomb!",
+                        "Ctrl + QQ and you win!",]
+    __challenge_msgs = ["Get your game on!",
+                        "It's time to d-d-d-d-d-duel!",
+                        "GL HF",
+                        "You ready for this?",
+                        "Bug catcher ManTiss wantsto battle!",
+                        "It's morphin' time!",
+                        "Challenge accepted!",]
+    __msg_sets.append(__dork_msgs)
+    __msg_sets.append(__inspirational_msgs)
+    __msg_sets.append(__obnoxious_msgs)
+    __msg_sets.append(__challenge_msgs)
+
+    def __get_rand_wait(self):
+        return random.randint(self.__base, self.__base + self.__range)
+
+    def get(self):
+        if self.__wait == 0:
+            self.__curr_msg = self.__msgs[random.randrange(len(self.__msgs))]
+            self.__wait = self.__get_rand_wait()
+        else:
+            self.__wait -= 1
+        return self.__curr_msg
+
+    def __init__(self, base=5, rand_range=7):
+        random.seed(datetime.datetime.now().microsecond)
+        self.__base = base
+        self.__range = rand_range
+        self.__wait = 0
+        self.__msgs = self.__msg_sets[random.randrange(len(self.__msg_sets))]
+        self.__curr_msg = ""
 
 
 #################################################################################
@@ -273,10 +334,12 @@ class GameState:
         return self.original_graph[u][v]
 
 
+init_timer = timer.start()
 factory_count = int(input())  # the number of factories
 link_count = int(input())  # the number of links between factories
 
 state = GameState(factory_count)
+msg_generator = MessageGenerator()
 
 for i in range(factory_count):
     state.factories[i] = Factory(i)
@@ -286,7 +349,6 @@ for i in range(link_count):
     state.create_edge(factory_1, factory_2, distance)
     state.create_edge(factory_2, factory_1, distance)       # Undirected
 
-init_timer = timer.start()
 state.min_distances.calculate()
 state.min_distances.cache_all_paths()
 
@@ -296,8 +358,10 @@ loop_timer = timer.reserve_id()
 
 # game loop
 while True:
-    game_cmd = "MSG Mommy said not to talk to  strangers..."
+    game_cmd = "MSG {}".format(msg_generator.get())
     print("Starting turn...", file=sys.stderr)
+
+    timer.start(loop_timer)
 
     entity_count = int(input())  # the number of entities (e.g. factories and troops)
     for i in range(entity_count):
@@ -321,8 +385,6 @@ while True:
                                time_left=arg_5)
         elif entity_type == "BOMB":
             print("BOMB", file=sys.stderr)
-
-    timer.start(loop_timer)
 
     state.tick_commands()
 
