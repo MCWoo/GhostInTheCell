@@ -108,9 +108,9 @@ class Timer:
         return i
 
     def stop(self, i):
-        delta = self.delta(i)
+        d = self.delta(i)
         del self.__timers[i]
-        return delta
+        return d
 
     def delta(self, i):
         return datetime.datetime.now() - self.__timers[i]
@@ -334,128 +334,137 @@ class GameState:
         return self.original_graph[u][v]
 
 
-init_timer = timer.start()
-factory_count = int(input())  # the number of factories
-link_count = int(input())  # the number of links between factories
+def init():
+    init_timer = timer.start()
+    factory_count = int(input())  # the number of factories
+    link_count = int(input())  # the number of links between factories
 
-state = GameState(factory_count)
-msg_generator = MessageGenerator()
+    state = GameState(factory_count)
+    msg_generator = MessageGenerator()
 
-for i in range(factory_count):
-    state.factories[i] = Factory(i)
+    for i in range(factory_count):
+        state.factories[i] = Factory(i)
 
-for i in range(link_count):
-    factory_1, factory_2, distance = [int(j) for j in input().split()]
-    state.create_edge(factory_1, factory_2, distance)
-    state.create_edge(factory_2, factory_1, distance)       # Undirected
+    for i in range(link_count):
+        factory_1, factory_2, distance = [int(j) for j in input().split()]
+        state.create_edge(factory_1, factory_2, distance)
+        state.create_edge(factory_2, factory_1, distance)       # Undirected
 
-state.min_distances.calculate()
-state.min_distances.cache_all_paths()
+    state.min_distances.calculate()
+    state.min_distances.cache_all_paths()
 
-delta = timer.stop(init_timer)
-print("{:.2f} ms spent initializing".format(delta.microseconds / 1000.0), file=sys.stderr)
-loop_timer = timer.reserve_id()
+    d = timer.stop(init_timer)
+    print("{:.2f} ms spent initializing".format(d.microseconds / 1000.0), file=sys.stderr)
+    return state, msg_generator
 
-# game loop
-while True:
-    game_cmd = "MSG {}".format(msg_generator.get())
-    print("Starting turn...", file=sys.stderr)
 
-    timer.start(loop_timer)
+def game_loop(state, msg_generator):
+    loop_timer = timer.reserve_id()
+    # game loop
+    while True:
+        game_cmd = "MSG {}".format(msg_generator.get())
+        print("Starting turn...", file=sys.stderr)
 
-    entity_count = int(input())  # the number of entities (e.g. factories and troops)
-    for i in range(entity_count):
-        line = input()
-        entity_id, entity_type, arg_1, arg_2, arg_3, arg_4, arg_5 = line.split()
-        entity_id = int(entity_id)
-        arg_1 = int(arg_1)
-        arg_2 = int(arg_2)
-        arg_3 = int(arg_3)
-        arg_4 = int(arg_4)
-        arg_5 = int(arg_5)
+        timer.start(loop_timer)
 
-        if entity_type == "FACTORY":
-            state.update_factory(entity_id, owner=arg_1, num_cyborgs=arg_2, cyborg_rate=arg_3)
-        elif entity_type == "TROOP":
-            state.update_troop(troop_id=entity_id,
-                               owner=arg_1,
-                               num_cyborgs=arg_4,
-                               src=arg_2,
-                               dst=arg_3,
-                               time_left=arg_5)
-        elif entity_type == "BOMB":
-            print("BOMB", file=sys.stderr)
+        entity_count = int(input())  # the number of entities (e.g. factories and troops)
+        for i in range(entity_count):
+            line = input()
+            entity_id, entity_type, arg_1, arg_2, arg_3, arg_4, arg_5 = line.split()
+            entity_id = int(entity_id)
+            arg_1 = int(arg_1)
+            arg_2 = int(arg_2)
+            arg_3 = int(arg_3)
+            arg_4 = int(arg_4)
+            arg_5 = int(arg_5)
 
-    state.tick_commands()
+            if entity_type == "FACTORY":
+                state.update_factory(entity_id, owner=arg_1, num_cyborgs=arg_2, cyborg_rate=arg_3)
+            elif entity_type == "TROOP":
+                state.update_troop(troop_id=entity_id,
+                                   owner=arg_1,
+                                   num_cyborgs=arg_4,
+                                   src=arg_2,
+                                   dst=arg_3,
+                                   time_left=arg_5)
+            elif entity_type == "BOMB":
+                print("BOMB", file=sys.stderr)
 
-    # Check commands to execute
-    remove_cmds = []    # indices to remove
-    for i in range(len(state.future_commands)):
-        cmd = state.future_commands[i]
-        if cmd and cmd.time_left < 0:
-            if state.factories[cmd.src].owner == PLAYER_ID_OPPONENT:
-                state.future_commands[i] = None
-                continue
-            cyborgs_needed = state.cyborgs_on_path(cmd.src, cmd.dst) + 1
-            if state.factories[cmd.src].num_cyborgs >= cyborgs_needed:
-                path = state.min_distances.get_cached_path(cmd.src, cmd.dst)
-                print("Path: {}".format(path), file=sys.stderr)
-                game_cmd += ";{} {} {} {}".format(CMD_MOVE, cmd.src, path[1], cyborgs_needed)
-                state.factories[cmd.src].num_cyborgs -= cyborgs_needed
-                if len(path) > 2:
-                    state.future_commands[i].src = path[1]
-                    state.future_commands[i].time_left = state.get_edge(cmd.src, path[1])
+        state.tick_commands()
+
+        # Check commands to execute
+        for i in range(len(state.future_commands)):
+            cmd = state.future_commands[i]
+            if cmd and cmd.time_left < 0:
+                if state.factories[cmd.src].owner == PLAYER_ID_OPPONENT:
+                    state.future_commands[i] = None
+                    continue
+                cyborgs_needed = state.cyborgs_on_path(cmd.src, cmd.dst) + 1
+                if state.factories[cmd.src].num_cyborgs >= cyborgs_needed:
+                    path = state.min_distances.get_cached_path(cmd.src, cmd.dst)
+                    print("Path: {}".format(path), file=sys.stderr)
+                    game_cmd += ";{} {} {} {}".format(CMD_MOVE, cmd.src, path[1], cyborgs_needed)
+                    state.factories[cmd.src].num_cyborgs -= cyborgs_needed
+                    if len(path) > 2:
+                        state.future_commands[i].src = path[1]
+                        state.future_commands[i].time_left = state.get_edge(cmd.src, path[1])
+                    else:
+                        state.future_commands[i] = None
                 else:
                     state.future_commands[i] = None
-            else:
-                state.future_commands[i] = None
 
-    state.prune_commands()
+        state.prune_commands()
 
-    # print("Filtering factory", file=sys.stderr)
-    filtered_list = state.get_filtered_factory_list()
-    # print("Filtered list: {}".format(filtered_list), file=sys.stderr)
-    if not filtered_list:
-        filtered_list = state.get_compliment_filtered_list()
+        # print("Filtering factory", file=sys.stderr)
+        filtered_list = state.get_filtered_factory_list()
         # print("Filtered list: {}".format(filtered_list), file=sys.stderr)
+        if not filtered_list:
+            filtered_list = state.get_compliment_filtered_list()
+            # print("Filtered list: {}".format(filtered_list), file=sys.stderr)
 
-    # print("Getting my factories", file=sys.stderr)
-    myfactories = state.get_player_factories(PLAYER_ID_SELF)
-    if not myfactories:
-        print("WAIT")
-        continue
+        # print("Getting my factories", file=sys.stderr)
+        myfactories = state.get_player_factories(PLAYER_ID_SELF)
+        if not myfactories:
+            print("WAIT")
+            continue
 
-    source_factory_id = max(myfactories, key=lambda x: state.factories[x].num_cyborgs)
-    # print("Source: {}".format(source_factory_id), file=sys.stderr)
-    target_factory_id = -1
-    num_cyborgs = 0
-    source_factory = state.factories[source_factory_id]
-    closest_dist = math.inf
+        source_factory_id = max(myfactories, key=lambda x: state.factories[x].num_cyborgs)
+        # print("Source: {}".format(source_factory_id), file=sys.stderr)
+        target_factory_id = -1
+        num_cyborgs = 0
+        source_factory = state.factories[source_factory_id]
+        closest_dist = math.inf
 
-    for factory in filtered_list:
-        rate = state.factories[factory].cyborg_rate
-        distance = state.min_distances.get_distance(source_factory.id, factory)
-        cyborgs_needed = state.cyborgs_on_path(source_factory_id, factory) + 1
-        if rate != 0:
-            weighted_dist = distance / float(rate)
-        if cyborgs_needed <= source_factory.num_cyborgs:
-            if weighted_dist < closest_dist:
-                target_factory_id = factory
-                closest_dist = weighted_dist
-                num_cyborgs = cyborgs_needed
-    if target_factory_id == -1:
-        game_cmd += ";WAIT"
-    elif num_cyborgs <= 0:
-        path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
-        if len(path) > 2:
-            state.future_commands.append(Command(src=path[1], dst=target_factory_id, time_left=1))
-    else:
-        path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
-        game_cmd += ";MOVE {} {} {}".format(source_factory_id, path[1], num_cyborgs)
-        if len(path) > 2:
-            state.future_commands.append(Command(src=path[1], dst=target_factory_id,
-                                                 time_left=state.get_edge(source_factory_id, path[1])))
+        for factory in filtered_list:
+            rate = state.factories[factory].cyborg_rate
+            distance = state.min_distances.get_distance(source_factory.id, factory)
+            cyborgs_needed = state.cyborgs_on_path(source_factory_id, factory) + 1
+            if rate != 0:
+                weighted_dist = distance / float(rate)
+            if cyborgs_needed <= source_factory.num_cyborgs:
+                if weighted_dist < closest_dist:
+                    target_factory_id = factory
+                    closest_dist = weighted_dist
+                    num_cyborgs = cyborgs_needed
+        if target_factory_id == -1:
+            game_cmd += ";WAIT"
+        elif num_cyborgs <= 0:
+            path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
+            if len(path) > 2:
+                state.future_commands.append(Command(src=path[1], dst=target_factory_id, time_left=1))
+        else:
+            path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
+            game_cmd += ";MOVE {} {} {}".format(source_factory_id, path[1], num_cyborgs)
+            if len(path) > 2:
+                state.future_commands.append(Command(src=path[1], dst=target_factory_id,
+                                                     time_left=state.get_edge(source_factory_id, path[1])))
 
-    print(game_cmd)
-    delta = timer.delta(loop_timer)
-    print("{:.2f} ms spent on turn".format(delta.microseconds / 1000.0), file=sys.stderr)
+        print(game_cmd)
+        d = timer.delta(loop_timer)
+        print("{:.2f} ms spent on turn".format(d.microseconds / 1000.0), file=sys.stderr)
+
+def main():
+    state, msg_generator = init()
+    game_loop(state, msg_generator)
+
+main()
