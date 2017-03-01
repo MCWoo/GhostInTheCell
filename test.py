@@ -265,11 +265,43 @@ class GameState:
         if time_left == 0:
             print("Troop with 0 time left! {}".format(troop), file=sys.stderr)
 
+    def calculate_perception(self):
+        for dst in self.troops:
+            # Sort and walk time-wise through troops
+            factory = self.perceived_factories[dst]
+            troops = [self.troops[dst][troop_id] for troop_id in self.troops[dst]]
+            troops.sort(key=lambda t: t.time_left)
+
+            num_troops = len(troops)
+            num_skip = 0
+            last_update = 0
+            for i in range(num_troops):
+                if num_skip > 0:
+                    num_skip -= 1
+                    continue
+                troop = troops[i]
+                delta = troop.num_cyborgs * troop.owner # delta w.r.t. me owning the factory
+                # if multiple trrops arrive at the same time
+                for j in range(i+1, num_troops):
+                    if troops[j].time_left == troop.time_left:
+                        delta += troops[j].num_cyborgs * troop.owner
+                        num_skip += 1
+                    else:
+                        break
+
+                # if factory is opponent owned, we want to subtract from its num cyborgs
+                if factory.owner == PLAYER_ID_OPPONENT:
+                    delta *= -1
+
+                factory.num_cyborgs += factory.cyborg_rate*(troop.time_left-last_update)
+                last_update = troop.time_left
+
     # Update all future commands
     def tick_commands(self):
         for cmd in self.future_commands:
             cmd.time_left -= 1
 
+    # Remove None commands
     def prune_commands(self):
         self.future_commands = [cmd for cmd in self.future_commands if cmd]
 
@@ -291,9 +323,6 @@ class GameState:
     def get_compliment_filtered_list(self):
         return [factory for factory in self.factories if self.factories[factory].cyborg_rate == 0 and self.factories[factory].owner != PLAYER_ID_SELF]
 
-    def can_run_command(self, command):
-        return self.factories[command.src].num_cyborgs >= command.cyborgs
-
     def cyborgs_on_path(self, u, v):
         path = self.min_distances.get_cached_path(u, v)
         troops = 0
@@ -312,7 +341,6 @@ class GameState:
         return self.original_graph[u][v]
 
 
-@staticmethod
 def init():
     init_timer = timer.start()
     factory_count = int(input())  # the number of factories
@@ -334,7 +362,6 @@ def init():
     return state, msg_generator
 
 
-@staticmethod
 def game_loop(state, msg_generator):
     loop_timer = timer.reserve_id()
     # game loop
@@ -367,6 +394,7 @@ def game_loop(state, msg_generator):
             elif entity_type == "BOMB":
                 print("BOMB", file=sys.stderr)
 
+        state.calculate_perception()
         state.tick_commands()
 
         # Check commands to execute
