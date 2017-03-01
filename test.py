@@ -11,24 +11,23 @@ CMD_MOVE = "MOVE"
 CMD_WAIT = "WAIT"
 CMD_BOMB = "BOMB"
 
+
+#################################################################################
 class Command:
-    id_counter = 0
-    def __init__(self, cmd="WAIT", src=-1, dst=-1, cyborgs=0, time_left=0):
-        self.id = id_counter
-        id_counter += 1
-        self.cmd = cmd
+    __id = 0
+
+    def __init__(self, src=-1, dst=-1, time_left=0):
+        self.id = self.__id
+        self.__id += 1
         self.src = src
         self.dst = dst
-        self.cyborgs = cyborgs
         self.time_left = time_left
 
+    def __repr__(self):
+        return "{} {} {}".format(CMD_MOVE, self.src, self.dst)
+
     def __str__(self):
-        if self.cmd == CMD_WAIT:
-            return self.cmd
-        elif self.cmd == CMD_MOVE:
-            return "{} {} {} {}".format(CMD_MOVE, self.src, self.dst, self.cyborgs)
-        elif self.cmd == CMD_BOMB:
-            return "{} {} {}".format(CMD_BOMB, self.src, self.dst)
+        return "{} {} {}".format(CMD_MOVE, self.src, self.dst)
 
 
 #################################################################################
@@ -62,6 +61,7 @@ class Timer:
 timer = Timer()
 
 
+#################################################################################
 # Factory related data
 class Factory:
     def __init__(self, factory_id):
@@ -69,34 +69,34 @@ class Factory:
         self.id = factory_id
         self.cyborg_rate = 0
         self.num_cyborgs = 0
-        self.distances = {}     # factory_id -> distance
 
     def __str__(self):
-        return "Player {}'s factory ({}): production rate: {}, # cyborgs: {}, adjacency list: {}"\
+        return "Player {}'s factory ({}): production rate: {}, # cyborgs: {}"\
             .format(self.owner,
                     self.id,
                     self.cyborg_rate,
-                    self.num_cyborgs,
-                    self.distances)
+                    self.num_cyborgs)
 
 
+#################################################################################
 # Troop related data
 class Troop:
-    def __init__(self, owner, num_cyborgs, source, destination, time_left):
+    def __init__(self, owner, num_cyborgs, src, dst, time_left):
         self.owner = owner
         self.num_cyborgs = num_cyborgs
-        self.source = source
-        self.destination = destination
+        self.src = src
+        self.dst = dst
         self.time_left = time_left
 
     def __str__(self):
         return "Player {}'s troop: {} cyborgs moving from {} to {} with {} turns left".format(self.owner,
                                                                                               self.num_cyborgs,
-                                                                                              self.source,
-                                                                                              self.destination,
+                                                                                              self.src,
+                                                                                              self.dst,
                                                                                               self.time_left)
 
 
+#################################################################################
 class MinFactoryDistances:
     def __init__(self, num_factories):
         self.__min_distances = [[(math.inf if m != n else 0) for n in range(num_factories)] for m in range(num_factories)]
@@ -122,6 +122,7 @@ class MinFactoryDistances:
                         self.__min_distances[u][v] = self.__min_distances[u][k] + self.__min_distances[k][v]
                         self.__predecessors[u][v] = self.__predecessors[k][v]       # Take the predecessor from k to v
         # print("Min dist: {}".format(self.__min_distances))
+        # print("Pred: {}".format(self.__predecessors))
         # print("Finished!", file=sys.stderr)
 
     # Shortest path from u to v
@@ -142,13 +143,20 @@ class MinFactoryDistances:
         return self.__cached_paths[(u, v)]
 
 
+#################################################################################
 # Holds the game state
 class GameState:
     def __init__(self, num_factories):
+        factory_range = range(num_factories)
         self.factories = {}     # id -> Factory Node
         self.troops = {}
         self.min_distances = MinFactoryDistances(num_factories)
+        self.original_graph = [[(math.inf if m != n else 0) for n in factory_range] for m in factory_range]
         self.future_commands = []
+
+    def create_edge(self, u, v, dist):
+        self.original_graph[u][v] = dist
+        self.min_distances.create_edge(u, v, dist)
 
     # Change the data for a given factory
     def update_factory(self, factory_id, owner, num_cyborgs, cyborg_rate):
@@ -158,12 +166,12 @@ class GameState:
         factory.cyborg_rate = cyborg_rate
 
     # Change or add the data for a given troop
-    def update_troop(self, troop_id, owner, num_cyborgs, source, destination, time_left):
+    def update_troop(self, troop_id, owner, num_cyborgs, src, dst, time_left):
         if troop_id not in self.troops:
             self.troops[troop_id] = Troop(owner=owner,
                                           num_cyborgs=num_cyborgs,
-                                          source=source,
-                                          destination=destination,
+                                          src=src,
+                                          dst=dst,
                                           time_left=time_left)
             return
         self.troops[troop_id].time_left = time_left
@@ -172,6 +180,9 @@ class GameState:
     def tick_commands(self):
         for cmd in self.future_commands:
             cmd.time_left -= 1
+
+    def prune_commands(self):
+        self.future_commands = [cmd for cmd in self.future_commands if cmd]
 
     # Get all factories that a player owns
     def get_player_factories(self, player_id):
@@ -189,7 +200,7 @@ class GameState:
 
         inbound_troops = {}
         for troop_id, troop in self.troops.items():
-            if troop.time_left <= turns_later and troop.destination == factory_id:
+            if troop.time_left <= turns_later and troop.dst == factory_id:
                 if troop.time_left in inbound_troops:
                     inbound_troops[troop.time_left].append(troop_id)
                 else:
@@ -244,25 +255,40 @@ class GameState:
     def can_run_command(self, command):
         return self.factories[command.src].num_cyborgs >= command.cyborgs
 
+    def cyborgs_on_path(self, u, v):
+        path = self.min_distances.get_cached_path(u, v)
+        troops = 0
+        for k in range(len(path)-1):
+            dist = self.min_distances.get_distance(path[k], path[k+1])
+            if self.factories[path[k+1]].owner == PLAYER_ID_SELF:
+                # troops -= self.factories[path[k+1]].num_cyborgs
+                # troops -= self.factories[path[k+1]].cyborg_rate*(dist+1)
+                continue
+            troops += self.factories[path[k+1]].num_cyborgs
+            if self.factories[path[k+1]].owner == PLAYER_ID_OPPONENT:
+                troops += self.factories[path[k+1]].cyborg_rate*(dist+1)
+        return troops
 
-init_timer = timer.start()
+    def get_edge(self, u, v):
+        return self.original_graph[u][v]
+
+
 factory_count = int(input())  # the number of factories
 link_count = int(input())  # the number of links between factories
 
-game_state = GameState(factory_count)
+state = GameState(factory_count)
 
 for i in range(factory_count):
-    game_state.factories[i] = Factory(i)
+    state.factories[i] = Factory(i)
 
 for i in range(link_count):
     factory_1, factory_2, distance = [int(j) for j in input().split()]
-    game_state.factories[factory_1].distances[factory_2] = distance     # Undirected
-    game_state.factories[factory_2].distances[factory_1] = distance
-    game_state.min_distances.create_edge(factory_1, factory_2, distance)
-    game_state.min_distances.create_edge(factory_2, factory_1, distance)       # Undirected
+    state.create_edge(factory_1, factory_2, distance)
+    state.create_edge(factory_2, factory_1, distance)       # Undirected
 
-game_state.min_distances.calculate()
-game_state.min_distances.cache_all_paths()
+init_timer = timer.start()
+state.min_distances.calculate()
+state.min_distances.cache_all_paths()
 
 delta = timer.stop(init_timer)
 print("{:.2f} ms spent initializing".format(delta.microseconds / 1000.0), file=sys.stderr)
@@ -270,10 +296,9 @@ loop_timer = timer.reserve_id()
 
 # game loop
 while True:
-    cmd = "WAIT"
+    game_cmd = "MSG Mommy said not to talk to  strangers..."
     print("Starting turn...", file=sys.stderr)
 
-    timer.start(loop_timer)
     entity_count = int(input())  # the number of entities (e.g. factories and troops)
     for i in range(entity_count):
         line = input()
@@ -286,56 +311,87 @@ while True:
         arg_5 = int(arg_5)
 
         if entity_type == "FACTORY":
-            game_state.update_factory(entity_id, owner=arg_1, num_cyborgs=arg_2, cyborg_rate=arg_3)
+            state.update_factory(entity_id, owner=arg_1, num_cyborgs=arg_2, cyborg_rate=arg_3)
         elif entity_type == "TROOP":
-            game_state.update_troop(troop_id=entity_id,
-                                    owner=arg_1,
-                                    num_cyborgs=arg_4,
-                                    source=arg_2,
-                                    destination=arg_3,
-                                    time_left=arg_5)
+            state.update_troop(troop_id=entity_id,
+                               owner=arg_1,
+                               num_cyborgs=arg_4,
+                               src=arg_2,
+                               dst=arg_3,
+                               time_left=arg_5)
         elif entity_type == "BOMB":
             print("BOMB", file=sys.stderr)
 
-    game_state.tick_commands()
+    timer.start(loop_timer)
+
+    state.tick_commands()
+
+    # Check commands to execute
+    remove_cmds = []    # indices to remove
+    for i in range(len(state.future_commands)):
+        cmd = state.future_commands[i]
+        if cmd and cmd.time_left < 0:
+            if state.factories[cmd.src].owner == PLAYER_ID_OPPONENT:
+                state.future_commands[i] = None
+                continue
+            cyborgs_needed = state.cyborgs_on_path(cmd.src, cmd.dst) + 1
+            if state.factories[cmd.src].num_cyborgs >= cyborgs_needed:
+                path = state.min_distances.get_cached_path(cmd.src, cmd.dst)
+                print("Path: {}".format(path), file=sys.stderr)
+                game_cmd += ";{} {} {} {}".format(CMD_MOVE, cmd.src, path[1], cyborgs_needed)
+                state.factories[cmd.src].num_cyborgs -= cyborgs_needed
+                if len(path) > 2:
+                    state.future_commands[i].src = path[1]
+                    state.future_commands[i].time_left = state.get_edge(cmd.src, path[1])
+                else:
+                    state.future_commands[i] = None
+            else:
+                state.future_commands[i] = None
+
+    state.prune_commands()
 
     # print("Filtering factory", file=sys.stderr)
-    filtered_list = game_state.get_filtered_factory_list()
-    print("Filtered list: {}".format(filtered_list), file=sys.stderr)
+    filtered_list = state.get_filtered_factory_list()
+    # print("Filtered list: {}".format(filtered_list), file=sys.stderr)
     if not filtered_list:
-        filtered_list = game_state.get_compliment_filtered_list()
-        print("Filtered list: {}".format(filtered_list), file=sys.stderr)
+        filtered_list = state.get_compliment_filtered_list()
+        # print("Filtered list: {}".format(filtered_list), file=sys.stderr)
 
     # print("Getting my factories", file=sys.stderr)
-    myfactories = game_state.get_player_factories(PLAYER_ID_SELF)
+    myfactories = state.get_player_factories(PLAYER_ID_SELF)
     if not myfactories:
         print("WAIT")
         continue
 
-    source_factory_id = max(myfactories, key=lambda x: game_state.factories[x].num_cyborgs)
+    source_factory_id = max(myfactories, key=lambda x: state.factories[x].num_cyborgs)
     # print("Source: {}".format(source_factory_id), file=sys.stderr)
     target_factory_id = -1
     num_cyborgs = 0
-    source_factory = game_state.factories[source_factory_id]
+    source_factory = state.factories[source_factory_id]
     closest_dist = math.inf
 
     for factory in filtered_list:
-        rate = game_state.factories[factory].cyborg_rate
-        distance = game_state.min_distances.get_distance(source_factory.id, factory)
-        cyborgs_needed = game_state.factories[factory].num_cyborgs + 1\
-            + (game_state.factories[factory].owner != PLAYER_ID_NEUTRAL)*rate*(distance+1)
-        if cyborgs_needed < source_factory.num_cyborgs:
+        rate = state.factories[factory].cyborg_rate
+        distance = state.min_distances.get_distance(source_factory.id, factory)
+        cyborgs_needed = state.cyborgs_on_path(source_factory_id, factory) + 1
+        if cyborgs_needed <= source_factory.num_cyborgs:
             if distance < closest_dist:
-                # print("Distance ({}, {}): {}".format(source_factory_id, factory, distance), file=sys.stderr)
                 target_factory_id = factory
-                closest_distance = distance
+                closest_dist = distance
                 num_cyborgs = cyborgs_needed
     if target_factory_id == -1:
-        cmd +=";WAIT"
+        game_cmd += ";WAIT"
+    elif num_cyborgs <= 0:
+        path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
+        if len(path) > 2:
+            state.future_commands.append(Command(src=path[1], dst=target_factory_id, time_left=1))
     else:
-        path = game_state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
-        cmd +=";MOVE {} {} {}".format(path[0], path[1], num_cyborgs)
+        path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
+        game_cmd += ";MOVE {} {} {}".format(source_factory_id, path[1], num_cyborgs)
+        if len(path) > 2:
+            state.future_commands.append(Command(src=path[1], dst=target_factory_id,
+                                                 time_left=state.get_edge(source_factory_id, path[1])))
 
-    print(cmd)
+    print(game_cmd)
     delta = timer.delta(loop_timer)
     print("{:.2f} ms spent on turn".format(delta.microseconds / 1000.0), file=sys.stderr)
