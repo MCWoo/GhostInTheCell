@@ -1,6 +1,8 @@
 import sys
 import math
 
+import datetime
+
 PLAYER_ID_SELF = 1
 PLAYER_ID_NEUTRAL = 0
 PLAYER_ID_OPPONENT = -1
@@ -27,6 +29,37 @@ class Command:
             return "{} {} {} {}".format(CMD_MOVE, self.src, self.dst, self.cyborgs)
         elif self.cmd == CMD_BOMB:
             return "{} {} {}".format(CMD_BOMB, self.src, self.dst)
+
+
+#################################################################################
+class Timer:
+    __id = 0
+
+    def __init__(self):
+        self.__timers = {}    # id -> datetime
+
+    def reserve_id(self):
+        return self.__id
+
+    def start(self, i=__id):
+        self.__timers[i] = datetime.datetime.now()
+        if i == self.__id:
+            self.__id += 1
+        return i
+
+    def stop(self, i):
+        delta = self.delta(i)
+        del self.__timers[i]
+        return delta
+
+    def delta(self, i):
+        return datetime.datetime.now() - self.__timers[i]
+
+    def clear(self, i):
+        if i in self.__timers:
+            del self.__timers[i]
+
+timer = Timer()
 
 
 # Factory related data
@@ -212,6 +245,7 @@ class GameState:
         return self.factories[command.src].num_cyborgs >= command.cyborgs
 
 
+init_timer = timer.start()
 factory_count = int(input())  # the number of factories
 link_count = int(input())  # the number of links between factories
 
@@ -230,10 +264,16 @@ for i in range(link_count):
 game_state.min_distances.calculate()
 game_state.min_distances.cache_all_paths()
 
+delta = timer.stop(init_timer)
+print("{:.2f} ms spent initializing".format(delta.microseconds / 1000.0), file=sys.stderr)
+loop_timer = timer.reserve_id()
+
 # game loop
 while True:
     cmd = "WAIT"
     print("Starting turn...", file=sys.stderr)
+
+    timer.start(loop_timer)
     entity_count = int(input())  # the number of entities (e.g. factories and troops)
     for i in range(entity_count):
         line = input()
@@ -280,13 +320,16 @@ while True:
     closest_dist = math.inf
 
     for factory in filtered_list:
-        if game_state.factories[factory].num_cyborgs < source_factory.num_cyborgs:
-            distance = game_state.min_distances.get_distance(source_factory.id, factory)
+        rate = game_state.factories[factory].cyborg_rate
+        distance = game_state.min_distances.get_distance(source_factory.id, factory)
+        cyborgs_needed = game_state.factories[factory].num_cyborgs + 1\
+            + (game_state.factories[factory].owner != PLAYER_ID_NEUTRAL)*rate*(distance+1)
+        if cyborgs_needed < source_factory.num_cyborgs:
             if distance < closest_dist:
-                print("Distance ({}, {}): {}".format(source_factory_id, factory, distance), file=sys.stderr)
+                # print("Distance ({}, {}): {}".format(source_factory_id, factory, distance), file=sys.stderr)
                 target_factory_id = factory
                 closest_distance = distance
-                num_cyborgs = game_state.factories[factory].num_cyborgs + game_state.factories[factory].cyborg_rate*distance + 1
+                num_cyborgs = cyborgs_needed
     if target_factory_id == -1:
         cmd +=";WAIT"
     else:
@@ -294,3 +337,5 @@ while True:
         cmd +=";MOVE {} {} {}".format(path[0], path[1], num_cyborgs)
 
     print(cmd)
+    delta = timer.delta(loop_timer)
+    print("{:.2f} ms spent on turn".format(delta.microseconds / 1000.0), file=sys.stderr)
