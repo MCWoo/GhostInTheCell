@@ -39,7 +39,7 @@ class MessageGenerator:
                         "Can you just give up?",
                         "Wat",
                         "/surrender pls",
-                        "Hey, alt + f4 gives you an     extra bomb!",
+                        "Hey, alt + f4 gives you an      extra bomb!",
                         "Ctrl + QQ and you win!",]
     __challenge_msgs = ["Get your game on!",
                         "It's time to d-d-d-d-d-duel!",
@@ -138,23 +138,44 @@ class Factory:
                     self.cyborg_rate,
                     self.num_cyborgs)
 
+    def __eq__(self, other):
+        try:
+            if other.__class__.__name__ != "Factory":
+                return False
+            return other.id == self.id
+        except:
+            return False
+
 
 #################################################################################
 # Troop related data
 class Troop:
-    def __init__(self, owner, num_cyborgs, src, dst, time_left):
+    def __init__(self, troop_id, owner, num_cyborgs, src, dst, time_left):
+        self.id = troop_id
         self.owner = owner
         self.num_cyborgs = num_cyborgs
         self.src = src
         self.dst = dst
         self.time_left = time_left
 
+    def __repr__(self):
+        return self.__str__()
+
     def __str__(self):
-        return "Player {}'s troop: {} cyborgs moving from {} to {} with {} turns left".format(self.owner,
-                                                                                              self.num_cyborgs,
-                                                                                              self.src,
-                                                                                              self.dst,
-                                                                                              self.time_left)
+        return "Player {}'s troop ({}): {} cyborgs moving from {} to {} with {} turns left".format(self.owner,
+                                                                                                   self.id,
+                                                                                                   self.num_cyborgs,
+                                                                                                   self.src,
+                                                                                                   self.dst,
+                                                                                                   self.time_left)
+
+    def __eq__(self, other):
+        try:
+            if other.__class__.__name__ != "Troop":
+                return False
+            return other.id == self.id
+        except:
+            return False
 
 
 #################################################################################
@@ -209,8 +230,9 @@ class MinFactoryDistances:
 class GameState:
     def __init__(self, num_factories):
         factory_range = range(num_factories)
-        self.factories = {}     # id -> Factory Node
-        self.troops = {}
+        self.factories = {i: Factory(i) for i in factory_range}     # id -> Factory Node
+        self.perceived_factories = {i: Factory(i) for i in factory_range}     # id -> Factory Node
+        self.troops = {}        # dst -> troop
         self.min_distances = MinFactoryDistances(num_factories)
         self.original_graph = [[(math.inf if m != n else 0) for n in factory_range] for m in factory_range]
         self.future_commands = []
@@ -221,21 +243,27 @@ class GameState:
 
     # Change the data for a given factory
     def update_factory(self, factory_id, owner, num_cyborgs, cyborg_rate):
-        factory = self.factories[factory_id]
-        factory.owner = owner
-        factory.num_cyborgs = num_cyborgs
-        factory.cyborg_rate = cyborg_rate
+        def helper(factory, o, n, r):
+            factory.owner = o
+            factory.num_cyborgs = n
+            factory.cyborg_rate = r
+        helper(self.factories[factory_id], owner, num_cyborgs, cyborg_rate)
+        helper(self.perceived_factories[factory_id], owner, num_cyborgs, cyborg_rate)
 
     # Change or add the data for a given troop
     def update_troop(self, troop_id, owner, num_cyborgs, src, dst, time_left):
-        if troop_id not in self.troops:
-            self.troops[troop_id] = Troop(owner=owner,
-                                          num_cyborgs=num_cyborgs,
-                                          src=src,
-                                          dst=dst,
-                                          time_left=time_left)
+        troop = Troop(troop_id=troop_id,
+                      owner=owner,
+                      num_cyborgs=num_cyborgs,
+                      src=src,
+                      dst=dst,
+                      time_left=time_left)
+        if dst not in self.troops:
+            self.troops[dst] = {troop_id: troop}
             return
-        self.troops[troop_id].time_left = time_left
+        self.troops[dst][troop_id] = troop
+        if time_left == 0:
+            print("Troop with 0 time left! {}".format(troop), file=sys.stderr)
 
     # Update all future commands
     def tick_commands(self):
@@ -252,56 +280,6 @@ class GameState:
             if factory.owner == player_id:
                 owned_factories.append(factory_id)
         return owned_factories
-
-    # Get the number of cyborgs at the factory a certain number of turns later
-    def cyborgs_at_factory(self, factory_id, turns_later=0):
-        num_cyborgs = self.factories[factory_id].num_cyborgs
-        factory_owner = self.factories[factory_id].owner
-        cyborg_rate = self.factories[factory_id].cyborg_rate
-
-        inbound_troops = {}
-        for troop_id, troop in self.troops.items():
-            if troop.time_left <= turns_later and troop.dst == factory_id:
-                if troop.time_left in inbound_troops:
-                    inbound_troops[troop.time_left].append(troop_id)
-                else:
-                    inbound_troops[troop.time_left] = [troop_id]
-
-        # calculate
-        last_check = 0
-        for time_left, troops in sorted(inbound_troops.items()):
-            num_cyborgs = 0
-
-            # If not neutral, produce cyborgs
-            if factory_owner != 0:
-                num_cyborgs += (troops[0].time_left - last_check) * cyborg_rate
-
-            # resolve multiple troops fighting
-            t_me = t_opponent = 0
-            for troop_id in troops:
-                if self.troops[troop_id].owner == PLAYER_ID_SELF:
-                    t_me += self.troops[troop_id].num_cyborgs
-                else:
-                    t_opponent += self.troops[troop_id].num_cyborgs
-            if t_me < t_opponent:
-                troop_owner = PLAYER_ID_OPPONENT
-                troop_cyborgs = t_opponent-t_me
-            elif t_me > t_opponent:
-                troop_owner = PLAYER_ID_SELF
-                troop_cyborgs = t_me-t_opponent
-            else:       # Equal, no change
-                continue
-
-            # Calculate troop contribution
-            if troop_owner == factory_owner:
-                num_cyborgs += troop_cyborgs
-            else:
-                num_cyborgs -= troop_cyborgs
-                if num_cyborgs < 0:
-                    num_cyborgs = abs(num_cyborgs)
-                    factory_owner *= -1     # cheap way to change owners ASSUMING only -1 and 1
-            last_check = troops[0].time_left
-        return num_cyborgs
 
     def get_sorted_factory_list(self):
         return sorted([factory for factory in self.factories if self.factories[factory].cyborg_rate != 0],
@@ -334,6 +312,7 @@ class GameState:
         return self.original_graph[u][v]
 
 
+@staticmethod
 def init():
     init_timer = timer.start()
     factory_count = int(input())  # the number of factories
@@ -341,9 +320,6 @@ def init():
 
     state = GameState(factory_count)
     msg_generator = MessageGenerator()
-
-    for i in range(factory_count):
-        state.factories[i] = Factory(i)
 
     for i in range(link_count):
         factory_1, factory_2, distance = [int(j) for j in input().split()]
@@ -358,6 +334,7 @@ def init():
     return state, msg_generator
 
 
+@staticmethod
 def game_loop(state, msg_generator):
     loop_timer = timer.reserve_id()
     # game loop
@@ -402,7 +379,6 @@ def game_loop(state, msg_generator):
                 cyborgs_needed = state.cyborgs_on_path(cmd.src, cmd.dst) + 1
                 if state.factories[cmd.src].num_cyborgs >= cyborgs_needed:
                     path = state.min_distances.get_cached_path(cmd.src, cmd.dst)
-                    print("Path: {}".format(path), file=sys.stderr)
                     game_cmd += ";{} {} {} {}".format(CMD_MOVE, cmd.src, path[1], cyborgs_needed)
                     state.factories[cmd.src].num_cyborgs -= cyborgs_needed
                     if len(path) > 2:
