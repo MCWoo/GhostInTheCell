@@ -374,10 +374,12 @@ while True:
         rate = state.factories[factory].cyborg_rate
         distance = state.min_distances.get_distance(source_factory.id, factory)
         cyborgs_needed = state.cyborgs_on_path(source_factory_id, factory) + 1
+        if rate != 0:
+            weighted_dist = distance / float(rate)
         if cyborgs_needed <= source_factory.num_cyborgs:
-            if distance < closest_dist:
+            if weighted_dist < closest_dist:
                 target_factory_id = factory
-                closest_dist = distance
+                closest_dist = weighted_dist
                 num_cyborgs = cyborgs_needed
     if target_factory_id == -1:
         game_cmd += ";WAIT"
