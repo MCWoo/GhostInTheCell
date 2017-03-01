@@ -2,7 +2,31 @@ import sys
 import math
 
 PLAYER_ID_SELF = 1
+PLAYER_ID_NEUTRAL = 0
 PLAYER_ID_OPPONENT = -1
+
+CMD_MOVE = "MOVE"
+CMD_WAIT = "WAIT"
+CMD_BOMB = "BOMB"
+
+class Command:
+    id_counter = 0
+    def __init__(self, cmd="WAIT", src=-1, dst=-1, cyborgs=0, time_left=0):
+        self.id = id_counter
+        id_counter += 1
+        self.cmd = cmd
+        self.src = src
+        self.dst = dst
+        self.cyborgs = cyborgs
+        self.time_left = time_left
+
+    def __str__(self):
+        if self.cmd == CMD_WAIT:
+            return self.cmd
+        elif self.cmd == CMD_MOVE:
+            return "{} {} {} {}".format(CMD_MOVE, self.src, self.dst, self.cyborgs)
+        elif self.cmd == CMD_BOMB:
+            return "{} {} {}".format(CMD_BOMB, self.src, self.dst)
 
 
 # Factory related data
@@ -91,6 +115,7 @@ class GameState:
         self.factories = {}     # id -> Factory Node
         self.troops = {}
         self.min_distances = MinFactoryDistances(num_factories)
+        self.future_commands = []
 
     # Change the data for a given factory
     def update_factory(self, factory_id, owner, num_cyborgs, cyborg_rate):
@@ -109,6 +134,11 @@ class GameState:
                                           time_left=time_left)
             return
         self.troops[troop_id].time_left = time_left
+
+    # Update all future commands
+    def tick_commands(self):
+        for cmd in self.future_commands:
+            cmd.time_left -= 1
 
     # Get all factories that a player owns
     def get_player_factories(self, player_id):
@@ -178,6 +208,9 @@ class GameState:
     def get_compliment_filtered_list(self):
         return [factory for factory in self.factories if self.factories[factory].cyborg_rate == 0 and self.factories[factory].owner != PLAYER_ID_SELF]
 
+    def can_run_command(self, command):
+        return self.factories[command.src].num_cyborgs >= command.cyborgs
+
 
 factory_count = int(input())  # the number of factories
 link_count = int(input())  # the number of links between factories
@@ -199,6 +232,7 @@ game_state.min_distances.cache_all_paths()
 
 # game loop
 while True:
+    cmd = "WAIT"
     print("Starting turn...", file=sys.stderr)
     entity_count = int(input())  # the number of entities (e.g. factories and troops)
     for i in range(entity_count):
@@ -222,6 +256,8 @@ while True:
                                     time_left=arg_5)
         elif entity_type == "BOMB":
             print("BOMB", file=sys.stderr)
+
+    game_state.tick_commands()
 
     # print("Filtering factory", file=sys.stderr)
     filtered_list = game_state.get_filtered_factory_list()
@@ -252,7 +288,9 @@ while True:
                 closest_distance = distance
                 num_cyborgs = game_state.factories[factory].num_cyborgs + game_state.factories[factory].cyborg_rate*distance + 1
     if target_factory_id == -1:
-        print("WAIT")
+        cmd +=";WAIT"
     else:
         path = game_state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
-        print("MOVE {} {} {}".format(path[0], path[1], num_cyborgs))
+        cmd +=";MOVE {} {} {}".format(path[0], path[1], num_cyborgs)
+
+    print(cmd)
