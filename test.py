@@ -131,6 +131,9 @@ class Factory:
         self.cyborg_rate = 0
         self.num_cyborgs = 0
 
+    def __repr__(self):
+        return self.__str__()
+
     def __str__(self):
         return "Player {}'s factory ({}): production rate: {}, # cyborgs: {}"\
             .format(self.owner,
@@ -268,8 +271,22 @@ class GameState:
 
     def update_after_move(self, src, dst, num_cyborgs):
         self.factories[src].num_cyborgs -= num_cyborgs
-        self.perceived_factories[src].num_cyborgs -= num_cyborgs
-        self.perceived_factories[dst].num_cyborgs += num_cyborgs
+        self.perceived_factories[src].num_cyborgs -= num_cyborgs    # should be moving from self
+        if self.perceived_factories[src].num_cyborgs < 0:
+            self.perceived_factories[src].num_cyborgs *= -1
+            self.perceived_factories[src].owner *= -1
+
+        dist = self.get_edge(src, dst)
+
+        if self.perceived_factories[dst].owner == PLAYER_ID_SELF:
+            self.perceived_factories[dst].num_cyborgs += num_cyborgs
+        else:
+            if self.perceived_factories[dst].owner == PLAYER_ID_OPPONENT:
+                num_cyborgs -= self.perceived_factories[dst].cyborg_rate*(dist+1)
+            self.perceived_factories[dst].num_cyborgs -= num_cyborgs
+            if self.perceived_factories[dst].num_cyborgs < 0:
+                self.perceived_factories[dst].owner = PLAYER_ID_SELF
+                self.perceived_factories[dst].num_cyborgs *= -1
 
     def calculate_perception(self):
         for dst in self.troops:
@@ -288,7 +305,7 @@ class GameState:
                     continue
                 troop = troops[i]
                 delta = troop.num_cyborgs * troop.owner # delta w.r.t. me owning the factory
-                # if multiple trrops arrive at the same time
+                # if multiple troops arrive at the same time
                 for j in range(i+1, num_troops):
                     if troops[j].time_left == troop.time_left:
                         delta += troops[j].num_cyborgs * troop.owner
@@ -355,8 +372,9 @@ class GameState:
         if factories is None:
             factories = self.factories
         troops = 0
+        dist = 0
         for k in range(1, len(path)):
-            dist = self.min_distances.get_distance(path[k-1], path[k])
+            dist += self.get_edge(path[k-1], path[k])
             if factories[path[k]].owner == PLAYER_ID_SELF:
                 # troops -= factories[path[k+1]].num_cyborgs
                 # troops -= factories[path[k+1]].cyborg_rate*(dist+1)
