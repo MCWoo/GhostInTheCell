@@ -604,42 +604,6 @@ def game_loop(state, msg_generator):
             #                                          dst=my_factories[next_factory],
             #                                          time_left=state.get_edge(factory.id, path[1]))
 
-        # source_factory_id = my_factories[0].id # max(my_factories, key=lambda x: state.factories[x].num_cyborgs)
-        # target_factory_id = -1
-        # num_cyborgs = 0
-        # source_factory = state.factories[source_factory_id]
-        # closest_dist = math.inf
-        #
-        # for factory in filtered_list:
-        #     rate = state.factories[factory].cyborg_rate
-        #     distance = state.min_distances.get_distance(source_factory_id, factory)
-        #     path = state.min_distances.get_cached_path(source_factory_id, factory)
-        #     cyborgs_needed = state.cyborgs_on_path(path, state.perceived_factories) + 1
-        #     if rate != 0:
-        #         weighted_dist = distance / float(rate)
-        #     if cyborgs_needed <= source_factory.num_cyborgs:
-        #         if weighted_dist < closest_dist:
-        #             target_factory_id = factory
-        #             closest_dist = weighted_dist
-        #             num_cyborgs = cyborgs_needed
-        # if target_factory_id == -1:
-        #     game_cmd += ";WAIT"
-        # elif num_cyborgs <= 0:
-        #     path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
-        #     if len(path) > 2:
-        #         state.add_future_command(src=path[1], dst=target_factory_id, time_left=1)
-        # else:
-        #     path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
-        #     if len(path) < 2:
-        #         print("Path ({},{}) too short! {}".format(source_factory_id, target_factory_id, path), file=sys.stderr)
-        #     else:
-        #         game_cmd += ";MOVE {} {} {}".format(source_factory_id, path[1], num_cyborgs)
-        #         state.update_after_move(source_factory_id, path[1], num_cyborgs)
-        #         if len(path) > 2:
-        #             state.add_future_command(src=path[1],
-        #                                      dst=target_factory_id,
-        #                                      time_left=state.get_edge(source_factory_id, path[1]))
-
         print(game_cmd)
         d = timer.delta(loop_timer)
         print("{:.2f} ms spent on turn {}".format(d.microseconds / 1000.0, turn), file=sys.stderr)
