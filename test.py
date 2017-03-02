@@ -250,6 +250,9 @@ class GameState:
         helper(self.factories[factory_id], owner, num_cyborgs, cyborg_rate)
         helper(self.perceived_factories[factory_id], owner, num_cyborgs, cyborg_rate)
 
+    def clear_troops(self):
+        self.troops.clear()
+
     # Change or add the data for a given troop
     def update_troop(self, troop_id, owner, num_cyborgs, src, dst, time_left):
         troop = Troop(troop_id=troop_id,
@@ -263,11 +266,6 @@ class GameState:
             return
         self.troops[dst][troop_id] = troop
 
-        if troop.owner == PLAYER_ID_SELF:
-            for command in self.future_commands:
-                if troop.dst == command.src and troop.time_left == command.time_left:
-                    print("Troop matches command!", file=sys.stderr)
-
     def update_after_move(self, src, dst, num_cyborgs):
         self.factories[src].num_cyborgs -= num_cyborgs
         self.perceived_factories[src].num_cyborgs -= num_cyborgs
@@ -279,6 +277,7 @@ class GameState:
             factory = self.perceived_factories[dst]
             troops = [self.troops[dst][troop_id] for troop_id in self.troops[dst]]
             troops.sort(key=lambda t: t.time_left)
+            # print("Troops({}): {}".format(dst, list(map(lambda t: t.time_left, troops))), file=sys.stderr)
 
             num_troops = len(troops)
             num_skip = 0
@@ -297,12 +296,13 @@ class GameState:
                     else:
                         break
 
-                # if factory is opponent owned, we want to subtract from its num cyborgs
-                if factory.owner == PLAYER_ID_OPPONENT:
-                    delta *= -1
-
-                factory.num_cyborgs += factory.cyborg_rate*(troop.time_left-last_update)
-                factory.num_cyborgs += delta
+                # If not neutral, generates troops
+                if factory.owner == PLAYER_ID_NEUTRAL:
+                    factory.num_cyborgs -= abs(delta)
+                else:
+                    delta *= factory.owner  # -troops = opponent won, but add them if opponent is owner, else subtract
+                    factory.num_cyborgs += factory.cyborg_rate*(troop.time_left-last_update)
+                    factory.num_cyborgs += delta
                 # Ownership change perceived
                 if factory.num_cyborgs < 0:
                     factory.num_cyborgs *= -1
@@ -339,35 +339,32 @@ class GameState:
         return sorted([factory for factory in self.factories if self.factories[factory].cyborg_rate != 0],
                       key=lambda x: self.factories[x].cyborg_rate, reverse=True)
 
-    def get_target_factory_list(self):
-        return [factory for factory in self.factories if self.factories[factory].cyborg_rate != 0
-                and self.factories[factory].owner != PLAYER_ID_SELF]
+    def get_target_factory_list(self, factories=None):
+        if factories is None:
+            factories = self.factories
+        return [factory for factory in factories if factories[factory].cyborg_rate != 0
+                and factories[factory].owner != PLAYER_ID_SELF]
 
-    def get_compliment_filtered_list(self):
-        return [factory for factory in self.factories if self.factories[factory].cyborg_rate == 0
-                and self.factories[factory].owner != PLAYER_ID_SELF]
+    def get_compliment_filtered_list(self, factories=None):
+        if factories is None:
+            factories = self.factories
+        return [factory for factory in factories if factories[factory].cyborg_rate == 0
+                and factories[factory].owner != PLAYER_ID_SELF]
 
-    def get_perceived_target_factory_list(self):
-        return [factory for factory in self.perceived_factories if self.perceived_factories[factory].cyborg_rate != 0
-                and self.perceived_factories[factory].owner != PLAYER_ID_SELF]
-
-    def get_perceived_compliment_filtered_list(self):
-        return [factory for factory in self.perceived_factories if self.perceived_factories[factory].cyborg_rate == 0
-                and self.perceived_factories[factory].owner != PLAYER_ID_SELF]
-
-    def cyborgs_on_path(self, u, v):
-        path = self.min_distances.get_cached_path(u, v)
+    def cyborgs_on_path(self, path, factories=None):
+        if factories is None:
+            factories = self.factories
         troops = 0
-        for k in range(len(path)-1):
-            dist = self.min_distances.get_distance(path[k], path[k+1])
-            if self.factories[path[k+1]].owner == PLAYER_ID_SELF:
-                # troops -= self.factories[path[k+1]].num_cyborgs
-                # troops -= self.factories[path[k+1]].cyborg_rate*(dist+1)
+        for k in range(1, len(path)):
+            dist = self.min_distances.get_distance(path[k-1], path[k])
+            if factories[path[k]].owner == PLAYER_ID_SELF:
+                # troops -= factories[path[k+1]].num_cyborgs
+                # troops -= factories[path[k+1]].cyborg_rate*(dist+1)
                 continue
-            troops += self.factories[path[k+1]].num_cyborgs
-            if self.factories[path[k+1]].owner == PLAYER_ID_OPPONENT:
-                troops += self.factories[path[k+1]].cyborg_rate*(dist+1)
-        return troops
+            troops += factories[path[k]].num_cyborgs
+            if factories[path[k]].owner == PLAYER_ID_OPPONENT:
+                troops += factories[path[k]].cyborg_rate*(dist+1)
+        return int(troops)
 
     def get_edge(self, u, v):
         return self.original_graph[u][v]
@@ -403,6 +400,8 @@ def game_loop(state, msg_generator):
 
         timer.start(loop_timer)
 
+        state.clear_troops()
+
         entity_count = int(input())  # the number of entities (e.g. factories and troops)
         for i in range(entity_count):
             line = input()
@@ -432,13 +431,13 @@ def game_loop(state, msg_generator):
         # Check commands to execute
         for i in range(len(state.future_commands)):
             cmd = state.future_commands[i]
-            cyborgs_needed = state.cyborgs_on_path(cmd.src, cmd.dst) + 1
+            path = state.min_distances.get_cached_path(cmd.src, cmd.dst)
+            cyborgs_needed = state.cyborgs_on_path(path, state.perceived_factories) + 1
             if cmd.time_left < 0:
                 if state.factories[cmd.src].owner == PLAYER_ID_OPPONENT:
                     state.future_commands[i] = None
                     continue
                 if state.factories[cmd.src].num_cyborgs >= cyborgs_needed:
-                    path = state.min_distances.get_cached_path(cmd.src, cmd.dst)
                     game_cmd += ";{} {} {} {}".format(CMD_MOVE, cmd.src, path[1], cyborgs_needed)
                     state.update_after_move(cmd.src, path[1], cyborgs_needed)
                     if len(path) > 2:
@@ -454,11 +453,10 @@ def game_loop(state, msg_generator):
 
         state.prune_commands()
 
-        # print("Filtering factory", file=sys.stderr)
-        filtered_list = state.get_target_factory_list()
+        filtered_list = state.get_target_factory_list(state.perceived_factories)
         # print("Filtered list: {}".format(filtered_list), file=sys.stderr)
         if not filtered_list:
-            filtered_list = state.get_compliment_filtered_list()
+            filtered_list = state.get_compliment_filtered_list(state.perceived_factories)
             # print("Filtered list: {}".format(filtered_list), file=sys.stderr)
 
         # print("Getting my factories", file=sys.stderr)
@@ -476,8 +474,9 @@ def game_loop(state, msg_generator):
 
         for factory in filtered_list:
             rate = state.factories[factory].cyborg_rate
-            distance = state.min_distances.get_distance(source_factory.id, factory)
-            cyborgs_needed = state.cyborgs_on_path(source_factory_id, factory) + 1
+            distance = state.min_distances.get_distance(source_factory_id, factory)
+            path = state.min_distances.get_cached_path(source_factory_id, factory)
+            cyborgs_needed = state.cyborgs_on_path(path, state.perceived_factories) + 1
             if rate != 0:
                 weighted_dist = distance / float(rate)
             if cyborgs_needed <= source_factory.num_cyborgs:
@@ -493,10 +492,13 @@ def game_loop(state, msg_generator):
                 state.future_commands.append(Command(src=path[1], dst=target_factory_id, time_left=1))
         else:
             path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
-            game_cmd += ";MOVE {} {} {}".format(source_factory_id, path[1], num_cyborgs)
-            if len(path) > 2:
-                state.future_commands.append(Command(src=path[1], dst=target_factory_id,
-                                                     time_left=state.get_edge(source_factory_id, path[1])))
+            if len(path) < 2:
+                print("Path ({},{}) too short! {}".format(source_factory_id, target_factory_id, path), file=sys.stderr)
+            else:
+                game_cmd += ";MOVE {} {} {}".format(source_factory_id, path[1], num_cyborgs)
+                if len(path) > 2:
+                    state.future_commands.append(Command(src=path[1], dst=target_factory_id,
+                                                         time_left=state.get_edge(source_factory_id, path[1])))
 
         print(game_cmd)
         d = timer.delta(loop_timer)
