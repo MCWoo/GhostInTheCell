@@ -198,17 +198,12 @@ class MinFactoryDistances:
 
     # Floyd-Warshall algorithm
     def calculate(self):
-        # print("Min dist: {}".format(self.__min_distances))
-        # print("Starting min distance calculations...", file=sys.stderr)
         for k in range(self.__num_factories):
             for u in range(self.__num_factories):
                 for v in range(self.__num_factories):
                     if self.__min_distances[u][v] > (self.__min_distances[u][k] + self.__min_distances[k][v]):
                         self.__min_distances[u][v] = self.__min_distances[u][k] + self.__min_distances[k][v]
                         self.__predecessors[u][v] = self.__predecessors[k][v]       # Take the predecessor from k to v
-        # print("Min dist: {}".format(self.__min_distances))
-        # print("Pred: {}".format(self.__predecessors))
-        # print("Finished!", file=sys.stderr)
 
     # Shortest path from u to v
     def __get_path(self, u, v):
@@ -294,7 +289,6 @@ class GameState:
             factory = self.perceived_factories[dst]
             troops = [self.troops[dst][troop_id] for troop_id in self.troops[dst]]
             troops.sort(key=lambda t: t.time_left)
-            # print("Troops({}): {}".format(dst, list(map(lambda t: t.time_left, troops))), file=sys.stderr)
 
             num_troops = len(troops)
             num_skip = 0
@@ -387,6 +381,8 @@ class GameState:
     def get_edge(self, u, v):
         return self.original_graph[u][v]
 
+turn = 0
+
 
 def init():
     init_timer = timer.start()
@@ -413,8 +409,9 @@ def game_loop(state, msg_generator):
     loop_timer = timer.reserve_id()
     # game loop
     while True:
+        global turn
+        turn += 2   # for me and opponenet
         game_cmd = "MSG {}".format(msg_generator.get())
-        print("Starting turn...", file=sys.stderr)
 
         timer.start(loop_timer)
 
@@ -440,8 +437,8 @@ def game_loop(state, msg_generator):
                                    src=arg_2,
                                    dst=arg_3,
                                    time_left=arg_5)
-            elif entity_type == "BOMB":
-                print("BOMB", file=sys.stderr)
+            # elif entity_type == "BOMB":
+            #     print("BOMB", file=sys.stderr)
 
         state.calculate_perception()
         state.tick_commands()
@@ -472,19 +469,15 @@ def game_loop(state, msg_generator):
         state.prune_commands()
 
         filtered_list = state.get_target_factory_list(state.perceived_factories)
-        # print("Filtered list: {}".format(filtered_list), file=sys.stderr)
         if not filtered_list:
             filtered_list = state.get_compliment_filtered_list(state.perceived_factories)
-            # print("Filtered list: {}".format(filtered_list), file=sys.stderr)
 
-        # print("Getting my factories", file=sys.stderr)
         myfactories = state.get_player_factories(PLAYER_ID_SELF)
         if not myfactories:
             print("WAIT")
             continue
 
         source_factory_id = max(myfactories, key=lambda x: state.factories[x].num_cyborgs)
-        # print("Source: {}".format(source_factory_id), file=sys.stderr)
         target_factory_id = -1
         num_cyborgs = 0
         source_factory = state.factories[source_factory_id]
