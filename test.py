@@ -225,6 +225,20 @@ class MinFactoryDistances:
 
 
 #################################################################################
+class PlayerStats:
+    def __init__(self):
+        self.factories = []
+        self.cyborgs = 0
+        self.cyborg_rate = 0
+        self.bombs = 2
+
+    def clear(self):
+        self.factories.clear()
+        self.cyborgs = 0
+        self.cyborg_rate = 0
+
+
+#################################################################################
 # Holds the game state
 class GameState:
     def __init__(self, num_factories):
@@ -235,6 +249,8 @@ class GameState:
         self.min_distances = MinFactoryDistances(num_factories)
         self.original_graph = [[(math.inf if m != n else 0) for n in factory_range] for m in factory_range]
         self.future_commands = []
+
+        self.player_stats = {PLAYER_ID_SELF: PlayerStats(), PLAYER_ID_OPPONENT: PlayerStats()}
 
     def create_edge(self, u, v, dist):
         self.original_graph[u][v] = dist
@@ -253,14 +269,26 @@ class GameState:
             factory.owner = o
             factory.num_cyborgs = n
             factory.cyborg_rate = r
+
+        if owner in self.player_stats:
+            self.player_stats[owner].factories.append(factory_id)
+            self.player_stats[owner].cyborgs += num_cyborgs
+            self.player_stats[owner].cyborg_rate += cyborg_rate
+
         helper(self.factories[factory_id], owner, num_cyborgs, cyborg_rate)
         helper(self.perceived_factories[factory_id], owner, num_cyborgs, cyborg_rate)
+
+    def next_round(self):
+        self.clear_troops()
+        self.player_stats[PLAYER_ID_SELF].clear()
+        self.player_stats[PLAYER_ID_OPPONENT].clear()
 
     def clear_troops(self):
         self.troops.clear()
 
     # Change or add the data for a given troop
     def update_troop(self, troop_id, owner, num_cyborgs, src, dst, time_left):
+        self.player_stats[owner].cyborgs += num_cyborgs
         troop = Troop(troop_id=troop_id,
                       owner=owner,
                       num_cyborgs=num_cyborgs,
@@ -384,11 +412,9 @@ class GameState:
 
     # Get all factories that a player owns
     def get_player_factories(self, player_id):
-        owned_factories = []
-        for factory_id, factory in self.factories.items():
-            if factory.owner == player_id:
-                owned_factories.append(factory_id)
-        return owned_factories
+        if player_id in self.player_stats:
+            return self.player_stats[player_id].factories
+        return [factory_id for factory_id in self.factories if self.factories[factory_id].owner == PLAYER_ID_NEUTRAL]
 
     def get_sorted_factory_list(self):
         return sorted([factory for factory in self.factories if self.factories[factory].cyborg_rate != 0],
@@ -460,7 +486,7 @@ def game_loop(state, msg_generator):
 
         timer.start(loop_timer)
 
-        state.clear_troops()
+        state.next_round()
 
         entity_count = int(input())  # the number of entities (e.g. factories and troops)
         for i in range(entity_count):
@@ -513,52 +539,106 @@ def game_loop(state, msg_generator):
 
         state.prune_commands()
 
-        filtered_list = state.get_target_factory_list(state.perceived_factories)
-        if not filtered_list:
-            filtered_list = state.get_compliment_filtered_list(state.perceived_factories)
-
-        myfactories = state.get_player_factories(PLAYER_ID_SELF)
-        if not myfactories:
+        my_factories = state.get_player_factories(PLAYER_ID_SELF)
+        print("My factories: {}".format(my_factories), file=sys.stderr)
+        if not my_factories:
             print("WAIT")
             continue
 
-        source_factory_id = max(myfactories, key=lambda x: state.factories[x].num_cyborgs)
-        target_factory_id = -1
-        num_cyborgs = 0
-        source_factory = state.factories[source_factory_id]
-        closest_dist = math.inf
+        ################################################################################
+        my_factories.sort(key=lambda x: state.factories[x].locality)
+        mean_locality = sum([state.factories[f].locality for f in my_factories]) / float(len(my_factories))
 
-        for factory in filtered_list:
-            rate = state.factories[factory].cyborg_rate
-            distance = state.min_distances.get_distance(source_factory_id, factory)
-            path = state.min_distances.get_cached_path(source_factory_id, factory)
-            cyborgs_needed = state.cyborgs_on_path(path, state.perceived_factories) + 1
-            if rate != 0:
-                weighted_dist = distance / float(rate)
-            if cyborgs_needed <= source_factory.num_cyborgs:
-                if weighted_dist < closest_dist:
-                    target_factory_id = factory
-                    closest_dist = weighted_dist
-                    num_cyborgs = cyborgs_needed
-        if target_factory_id == -1:
-            game_cmd += ";WAIT"
-        elif num_cyborgs <= 0:
-            path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
-            if len(path) > 2:
-                state.add_future_command(src=path[1], dst=target_factory_id, time_left=1)
-        else:
-            path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
-            if len(path) < 2:
-                print("Path ({},{}) too short! {}".format(source_factory_id, target_factory_id, path), file=sys.stderr)
-            else:
-                if turn > 50:
-                    print("Pathing {} with {} cyborgs".format(path, num_cyborgs), file=sys.stderr)
-                game_cmd += ";MOVE {} {} {}".format(source_factory_id, path[1], num_cyborgs)
-                state.update_after_move(source_factory_id, path[1], num_cyborgs)
-                if len(path) > 2:
-                    state.add_future_command(src=path[1],
-                                             dst=target_factory_id,
-                                             time_left=state.get_edge(source_factory_id, path[1]))
+        for i in range(len(my_factories)):
+            filtered_list = state.get_target_factory_list(state.perceived_factories)
+            if not filtered_list:
+                filtered_list = state.get_compliment_filtered_list(state.perceived_factories)
+
+            # Get the real factory
+            factory = state.factories[my_factories[i]]
+
+            # Don't move from here if we're not perceived to own it
+            if state.perceived_factories[factory.id].owner != PLAYER_ID_SELF:
+                continue
+
+            # Find the closest targets
+            closest = math.inf
+            target_id = -1
+            num_cyborgs = 0
+            for factory_id in filtered_list:
+                rate = state.perceived_factories[factory_id].cyborg_rate
+                dist = state.min_distances.get_distance(factory.id, factory_id)
+                path = state.min_distances.get_cached_path(factory.id, factory_id)
+                cyborgs_needed = state.cyborgs_on_path(path, state.perceived_factories) + 1
+                if rate != 0:
+                    weighted_dist = dist / float(rate)
+                # Don't move if we're going to lose it
+                if cyborgs_needed <= state.perceived_factories[factory.id].num_cyborgs:
+                    if weighted_dist < closest:
+                        target_id = factory_id
+                        closest = weighted_dist
+                        num_cyborgs = cyborgs_needed
+            if target_id != -1:
+                path = state.min_distances.get_cached_path(u=factory.id, v=target_id)
+                if len(path) < 2:
+                    print("Path ({},{}) too short! {}".format(factory.id, target_id, path), file=sys.stderr)
+                else:
+                    game_cmd += ";MOVE {} {} {}".format(factory.id, path[1], num_cyborgs)
+                    state.update_after_move(factory.id, path[1], num_cyborgs)
+                    if len(path) > 2:
+                        state.add_future_command(src=path[1],
+                                                 dst=target_id,
+                                                 time_left=state.get_edge(factory.id, path[1]))
+            # elif i > 0 and factory.locality > mean_locality:
+            #     num_cyborgs = int(state.perceived_factories[factory.id].num_cyborgs / 2)
+            #     next_factory = int(i / 2)
+            #     if num_cyborgs > 0:
+            #         path = state.min_distances.get_cached_path(u=factory.id, v=my_factories[next_factory])
+            #         if len(path) < 2:
+            #             print("2Path ({},{}) too short! {}".format(factory.id, my_factories[next_factory], path), file=sys.stderr)
+            #         else:
+            #             game_cmd += ";MOVE {} {} {}".format(factory.id, path[1], num_cyborgs)
+            #             state.update_after_move(factory.id, path[1], num_cyborgs)
+            #             if len(path) > 2:
+            #                 state.add_future_command(src=path[1],
+            #                                          dst=my_factories[next_factory],
+            #                                          time_left=state.get_edge(factory.id, path[1]))
+
+        # source_factory_id = my_factories[0].id # max(my_factories, key=lambda x: state.factories[x].num_cyborgs)
+        # target_factory_id = -1
+        # num_cyborgs = 0
+        # source_factory = state.factories[source_factory_id]
+        # closest_dist = math.inf
+        #
+        # for factory in filtered_list:
+        #     rate = state.factories[factory].cyborg_rate
+        #     distance = state.min_distances.get_distance(source_factory_id, factory)
+        #     path = state.min_distances.get_cached_path(source_factory_id, factory)
+        #     cyborgs_needed = state.cyborgs_on_path(path, state.perceived_factories) + 1
+        #     if rate != 0:
+        #         weighted_dist = distance / float(rate)
+        #     if cyborgs_needed <= source_factory.num_cyborgs:
+        #         if weighted_dist < closest_dist:
+        #             target_factory_id = factory
+        #             closest_dist = weighted_dist
+        #             num_cyborgs = cyborgs_needed
+        # if target_factory_id == -1:
+        #     game_cmd += ";WAIT"
+        # elif num_cyborgs <= 0:
+        #     path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
+        #     if len(path) > 2:
+        #         state.add_future_command(src=path[1], dst=target_factory_id, time_left=1)
+        # else:
+        #     path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
+        #     if len(path) < 2:
+        #         print("Path ({},{}) too short! {}".format(source_factory_id, target_factory_id, path), file=sys.stderr)
+        #     else:
+        #         game_cmd += ";MOVE {} {} {}".format(source_factory_id, path[1], num_cyborgs)
+        #         state.update_after_move(source_factory_id, path[1], num_cyborgs)
+        #         if len(path) > 2:
+        #             state.add_future_command(src=path[1],
+        #                                      dst=target_factory_id,
+        #                                      time_left=state.get_edge(source_factory_id, path[1]))
 
         print(game_cmd)
         d = timer.delta(loop_timer)
