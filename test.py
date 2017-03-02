@@ -130,6 +130,7 @@ class Factory:
         self.id = factory_id
         self.cyborg_rate = 0
         self.num_cyborgs = 0
+        self.locality = -1
 
     def __repr__(self):
         return self.__str__()
@@ -238,6 +239,13 @@ class GameState:
     def create_edge(self, u, v, dist):
         self.original_graph[u][v] = dist
         self.min_distances.create_edge(u, v, dist)
+
+    def calculate_locality(self):
+        factory_range = range(len(self.factories))
+        for u in factory_range:
+            for v in factory_range:
+                self.factories[u].locality += self.get_edge(u, v)
+                self.perceived_factories[u].locality += self.get_edge(u, v)
 
     # Change the data for a given factory
     def update_factory(self, factory_id, owner, num_cyborgs, cyborg_rate):
@@ -433,6 +441,7 @@ def init():
         state.create_edge(factory_1, factory_2, distance)
         state.create_edge(factory_2, factory_1, distance)       # Undirected
 
+    state.calculate_locality()
     state.min_distances.calculate()
     state.min_distances.cache_all_paths()
 
