@@ -324,10 +324,46 @@ class GameState:
                         factory.owner *= -1
                 last_update = troop.time_left
 
+    def add_future_command(self, src, dst, time_left):
+        self.future_commands.append(Command(src, dst, time_left))
+        self.update_perception_after_future_command(src, dst)
+
     def set_future_command(self, index, src, time_left):
         self.future_commands[index].src = src
         self.future_commands[index].time_left = time_left
-        # update perception
+        self.update_perception_after_future_command(src, self.future_commands[index].dst)
+
+    def update_perception_after_future_command(self, src, dst):
+        # Update perception as if we went through the full path already
+        path = self.min_distances.get_cached_path(src, dst)
+        cyborgs_needed = self.cyborgs_on_path(path, self.perceived_factories) + 1
+        global turn
+        for k in range(1, len(path)):
+            dist = self.get_edge(path[k-1], path[k])
+            next_factory = self.perceived_factories[path[k]]
+            if self.perceived_factories[path[k-1]].num_cyborgs < cyborgs_needed:
+                print("Error ({})! Not enough cyborgs perceived ({} < {}) at {}! Command({}, {}). Path: {}, Factories: {}"
+                      .format(k, self.perceived_factories[path[k-1]].num_cyborgs, cyborgs_needed, path[k-1], src, dst, path, self.perceived_factories), file=sys.stderr)    # Throw error
+                break
+            if self.perceived_factories[path[k-1]].owner != PLAYER_ID_SELF:    # Throw error
+                print("Error! Looking at factory ({}) that doesn't belong to me! Command({}, {}), Path: {}".format(path[k-1], src, dst, path), file=sys.stderr)
+                break
+            self.perceived_factories[path[k-1]].num_cyborgs -= cyborgs_needed   # first one should always be my factory
+
+            if next_factory.owner == PLAYER_ID_SELF:
+                next_factory.num_cyborgs += cyborgs_needed
+            else:
+                # Account for perceived generated cyborgs
+                if next_factory.owner == PLAYER_ID_OPPONENT:
+                    cyborgs_needed -= next_factory.cyborg_rate*(dist+1)
+                cyborgs_lost = next_factory.num_cyborgs
+                next_factory.num_cyborgs -= cyborgs_needed
+                cyborgs_needed -= cyborgs_lost     # Take out battling cyborgs
+                if next_factory.num_cyborgs < 0:
+                    next_factory.owner = PLAYER_ID_SELF
+                    next_factory.num_cyborgs *= -1      # make positive # cyborgs again
+                else:
+                    print("Error! num cyborgs ({}) at {} !< 0! Command({}, {}), Path: {}".format(next_factory.num_cyborgs, path[k], src, dst, path), file=sys.stderr)
 
     # Update all future commands
     def tick_commands(self):
@@ -500,20 +536,25 @@ def game_loop(state, msg_generator):
         elif num_cyborgs <= 0:
             path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
             if len(path) > 2:
-                state.future_commands.append(Command(src=path[1], dst=target_factory_id, time_left=1))
+                state.add_future_command(src=path[1], dst=target_factory_id, time_left=1)
         else:
             path = state.min_distances.get_cached_path(u=source_factory_id, v=target_factory_id)
             if len(path) < 2:
                 print("Path ({},{}) too short! {}".format(source_factory_id, target_factory_id, path), file=sys.stderr)
             else:
+                if turn > 50:
+                    print("Pathing {} with {} cyborgs".format(path, num_cyborgs), file=sys.stderr)
                 game_cmd += ";MOVE {} {} {}".format(source_factory_id, path[1], num_cyborgs)
+                state.update_after_move(source_factory_id, path[1], num_cyborgs)
                 if len(path) > 2:
-                    state.future_commands.append(Command(src=path[1], dst=target_factory_id,
-                                                         time_left=state.get_edge(source_factory_id, path[1])))
+                    state.add_future_command(src=path[1],
+                                             dst=target_factory_id,
+                                             time_left=state.get_edge(source_factory_id, path[1]))
 
         print(game_cmd)
         d = timer.delta(loop_timer)
-        print("{:.2f} ms spent on turn".format(d.microseconds / 1000.0), file=sys.stderr)
+        print("{:.2f} ms spent on turn {}".format(d.microseconds / 1000.0, turn), file=sys.stderr)
+
 
 def main():
     state, msg_generator = init()
