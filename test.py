@@ -47,7 +47,9 @@ class MessageGenerator:
                         "You ready for this?",
                         "Bug catcher ManTiss wantsto battle!",
                         "It's morphin' time!",
-                        "Challenge accepted!",]
+                        "Challenge accepted!",
+                        "Let's go D-Fence!",
+                        "Be aggressive! Be, be aggressive!",]
     __msg_sets.append(__dork_msgs)
     __msg_sets.append(__inspirational_msgs)
     __msg_sets.append(__obnoxious_msgs)
