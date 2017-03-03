@@ -455,9 +455,9 @@ turn = 0
 
 
 def init():
-    init_timer = timer.start()
     factory_count = int(input())  # the number of factories
     link_count = int(input())  # the number of links between factories
+    init_timer = timer.start()
 
     state = GameState(factory_count)
     msg_generator = MessageGenerator()
@@ -484,8 +484,6 @@ def game_loop(state, msg_generator):
         turn += 2   # for me and opponenet
         game_cmd = "MSG {}".format(msg_generator.get())
 
-        timer.start(loop_timer)
-
         state.next_round()
 
         entity_count = int(input())  # the number of entities (e.g. factories and troops)
@@ -510,6 +508,8 @@ def game_loop(state, msg_generator):
                                    time_left=arg_5)
             # elif entity_type == "BOMB":
             #     print("BOMB", file=sys.stderr)
+
+        timer.start(loop_timer)
 
         state.calculate_perception()
         state.tick_commands()
