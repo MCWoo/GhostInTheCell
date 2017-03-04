@@ -525,6 +525,8 @@ def game_loop(state, msg_generator):
                 if state.factories[cmd.src].owner == PLAYER_ID_OPPONENT:
                     state.future_commands[i] = None
                     continue
+                elif state.factories[cmd.src].owner == PLAYER_ID_NEUTRAL:
+                    continue        # Delay an extra round if miscalculated....
                 if state.factories[cmd.src].num_cyborgs >= cyborgs_needed:
                     game_cmd += ";{} {} {} {}".format(CMD_MOVE, cmd.src, path[1], cyborgs_needed)
                     state.update_after_move(cmd.src, path[1], cyborgs_needed)
@@ -574,11 +576,13 @@ def game_loop(state, msg_generator):
                 if cyborgs_needed <= factory_cyborgs:
                     valid_targets.append(factory_id)
 
-            def weighted_distance(target_id):
-                rate = state.perceived_factories[target_id].cyborg_rate
-                dist = state.min_distances.get_distance(src_factory.id, target_id)
+            def weighted_distance(target):
+                rate = state.perceived_factories[target].cyborg_rate
+                dist = state.min_distances.get_distance(src_factory.id, target)
+                shortest_path = state.min_distances.get_cached_path(u=src_factory.id, v=target)
+                cyborgs = state.cyborgs_on_path(shortest_path, state.perceived_factories) + 1
                 if rate != 0:
-                    dist /= float(rate)
+                    dist = (dist + cyborgs) / float(rate)
                 return dist
 
             if len(valid_targets) > 0:
@@ -600,7 +604,9 @@ def game_loop(state, msg_generator):
                                                          dst=target_id,
                                                          time_left=state.get_edge(src_factory.id, path[1]))
             elif i > 0 and src_factory.locality > mean_locality:
-                num_cyborgs = int(state.perceived_factories[src_factory.id].num_cyborgs / 2)
+                factory_cyborgs = min(state.factories[src_factory.id].num_cyborgs,
+                                      state.perceived_factories[src_factory.id].num_cyborgs)
+                num_cyborgs = int(factory_cyborgs / 2)
                 next_factory = int(i / 2)
                 if num_cyborgs > 0:
                     path = state.min_distances.get_cached_path(u=src_factory.id, v=my_factories[next_factory])
