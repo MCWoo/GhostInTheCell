@@ -519,15 +519,18 @@ def game_loop(state, msg_generator):
         # Check commands to execute
         for i in range(len(state.future_commands)):
             cmd = state.future_commands[i]
-            path = state.min_distances.get_cached_path(cmd.src, cmd.dst)
-            cyborgs_needed = state.cyborgs_on_path(path, state.perceived_factories) + 1
-            if cmd.time_left < 0:
+            if cmd.time_left <= 0:
+                path = state.min_distances.get_cached_path(cmd.src, cmd.dst)
+                cyborgs_needed = state.cyborgs_on_path(path, state.perceived_factories) + 1
+                factory_cyborgs = min(state.factories[cmd.src].num_cyborgs,
+                                      state.perceived_factories[cmd.src].num_cyborgs)
+
                 if state.factories[cmd.src].owner == PLAYER_ID_OPPONENT:
                     state.future_commands[i] = None
                     continue
                 elif state.factories[cmd.src].owner == PLAYER_ID_NEUTRAL:
                     continue        # Delay an extra round if miscalculated....
-                if state.factories[cmd.src].num_cyborgs >= cyborgs_needed:
+                if factory_cyborgs >= cyborgs_needed:
                     game_cmd += ";{} {} {} {}".format(CMD_MOVE, cmd.src, path[1], cyborgs_needed)
                     state.update_after_move(cmd.src, path[1], cyborgs_needed)
                     if len(path) > 2:
@@ -536,15 +539,10 @@ def game_loop(state, msg_generator):
                         state.future_commands[i] = None
                 else:
                     state.future_commands[i] = None
-            else:
-                if state.perceived_factories[cmd.src].num_cyborgs >= cyborgs_needed:
-                    # update perception map
-                    print("", file=sys.stderr)
 
         state.prune_commands()
 
         my_factories = state.get_player_factories(PLAYER_ID_SELF)
-        print("My factories: {}".format(my_factories), file=sys.stderr)
         if not my_factories:
             print("WAIT")
             continue
@@ -578,12 +576,12 @@ def game_loop(state, msg_generator):
 
             def weighted_distance(target):
                 rate = state.perceived_factories[target].cyborg_rate
-                dist = state.min_distances.get_distance(src_factory.id, target)
+                cost = state.min_distances.get_distance(src_factory.id, target)
                 shortest_path = state.min_distances.get_cached_path(u=src_factory.id, v=target)
                 cyborgs = state.cyborgs_on_path(shortest_path, state.perceived_factories) + 1
                 if rate != 0:
-                    dist = (dist + cyborgs) / float(rate)
-                return dist
+                    cost = (cost + cyborgs) / float(rate)
+                return cost
 
             if len(valid_targets) > 0:
                 valid_targets.sort(key=weighted_distance)
@@ -606,8 +604,9 @@ def game_loop(state, msg_generator):
             elif i > 0 and src_factory.locality > mean_locality:
                 factory_cyborgs = min(state.factories[src_factory.id].num_cyborgs,
                                       state.perceived_factories[src_factory.id].num_cyborgs)
-                num_cyborgs = int(factory_cyborgs / 2)
+                num_cyborgs = math.ceil(factory_cyborgs / 2)
                 next_factory = int(i / 2)
+
                 if num_cyborgs > 0:
                     path = state.min_distances.get_cached_path(u=src_factory.id, v=my_factories[next_factory])
                     if len(path) < 2:
