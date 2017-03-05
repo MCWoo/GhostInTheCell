@@ -8,6 +8,8 @@ PLAYER_ID_SELF = 1
 PLAYER_ID_NEUTRAL = 0
 PLAYER_ID_OPPONENT = -1
 
+MAX_BOMBS = 2
+
 CMD_MOVE = "MOVE"
 CMD_WAIT = "WAIT"
 CMD_BOMB = "BOMB"
@@ -185,6 +187,26 @@ class Troop:
 
 
 #################################################################################
+class Bomb:
+    def __init__(self, bomb_id, owner, src, dst=-1, time_left=-1):
+        self.id = bomb_id
+        self.owner = owner
+        self.src = src
+        self.dst = dst
+        self.time_left = time_left
+
+    def __repr__(self):
+        return self.__str__()
+
+    def __str__(self):
+        return "Player {}'s bomb ({}): {} to {} with {} time left".format(self.owner,
+                                                                          self.id,
+                                                                          self.src,
+                                                                          self.dst,
+                                                                          self.time_left)
+
+
+#################################################################################
 class MinFactoryDistances:
     def __init__(self, num_factories):
         self.__min_distances = [[(math.inf if m != n else 0) for n in range(num_factories)] for m in range(num_factories)]
@@ -233,7 +255,10 @@ class PlayerStats:
         self.factory_cyborgs = 0
         self.troop_cyborgs = 0
         self.cyborg_rate = 0
-        self.bombs = 2
+        self.bombs_sent = set()
+
+    def num_bombs_sent(self):
+        return len(self.bombs_sent)
 
     def clear(self):
         self.factories.clear()
@@ -250,6 +275,7 @@ class GameState:
         self.factories = {i: Factory(i) for i in factory_range}     # id -> Factory Node
         self.perceived_factories = {i: Factory(i) for i in factory_range}     # id -> Factory Node
         self.troops = {}        # dst -> troop
+        self.bombs = []
         self.min_distances = MinFactoryDistances(num_factories)
         self.original_graph = [[(math.inf if m != n else 0) for n in factory_range] for m in factory_range]
         self.future_commands = []
@@ -286,11 +312,15 @@ class GameState:
 
     def next_round(self):
         self.clear_troops()
+        self.clear_bombs()
         self.player_stats[PLAYER_ID_SELF].clear()
         self.player_stats[PLAYER_ID_OPPONENT].clear()
 
     def clear_troops(self):
         self.troops.clear()
+
+    def clear_bombs(self):
+        self.bombs.clear()
 
     # Change or add the data for a given troop
     def update_troop(self, troop_id, owner, num_cyborgs, src, dst, time_left):
@@ -305,6 +335,12 @@ class GameState:
             self.troops[dst] = {troop_id: troop}
             return
         self.troops[dst][troop_id] = troop
+
+    # Change or add the data for a given troop
+    def update_bomb(self, bomb_id, owner, src, dst, time_left):
+        self.player_stats[owner].bombs_sent.add(bomb_id)
+        bomb = Bomb(bomb_id,owner, src, dst, time_left)
+        self.bombs.append(bomb)
 
     def update_after_move(self, src, dst, num_cyborgs):
         self.factories[src].num_cyborgs -= num_cyborgs
@@ -512,8 +548,8 @@ def game_loop(state, msg_generator):
                                    src=arg_2,
                                    dst=arg_3,
                                    time_left=arg_5)
-            # elif entity_type == "BOMB":
-            #     print("BOMB", file=sys.stderr)
+            elif entity_type == "BOMB":
+                state.update_bomb(bomb_id=entity_id, owner=arg_1, src=arg_2, dst=arg_3, time_left=arg_4)
 
         timer.start(loop_timer)
 
@@ -623,13 +659,19 @@ def game_loop(state, msg_generator):
                                                      dst=my_factories[next_factory],
                                                      time_left=state.get_edge(src_factory.id, path[1]))
 
-        if state.player_stats[PLAYER_ID_SELF].bombs > 0:
+        bombs_available = MAX_BOMBS - state.player_stats[PLAYER_ID_SELF].num_bombs_sent()
+        if bombs_available > 0:
             enemy_factories = state.player_stats[PLAYER_ID_OPPONENT].factories
             mean_rate = state.player_stats[PLAYER_ID_OPPONENT].cyborg_rate / float(len(enemy_factories))
-            mean_cyborgs = (state.player_stats[PLAYER_ID_OPPONENT].factory_cyborgs
-                            + state.player_stats[PLAYER_ID_OPPONENT].troop_cyborgs) / float(len(enemy_factories))
             if mean_rate > 0:
+                mean_cyborgs = (state.player_stats[PLAYER_ID_OPPONENT].factory_cyborgs
+                                + state.player_stats[PLAYER_ID_OPPONENT].troop_cyborgs) / float(len(enemy_factories))
+                en_route_targets = {x.dst for x in state.bombs if x.owner == PLAYER_ID_SELF}
+
                 for bomb_target_id in enemy_factories:
+                    if bomb_target_id in en_route_targets:
+                        continue
+
                     target_factory = state.perceived_factories[bomb_target_id]
                     if target_factory.cyborg_rate >= mean_rate and target_factory.num_cyborgs >= mean_cyborgs:
                         # Send bomb
@@ -639,8 +681,8 @@ def game_loop(state, msg_generator):
                             source = min(state.player_stats[PLAYER_ID_SELF].factories,
                                          key=lambda x: state.get_edge(x, bomb_target_id))
                             game_cmd += ";BOMB {} {}".format(source, bomb_target_id)
-                            state.player_stats[PLAYER_ID_SELF].bombs -= 1
-                            if state.player_stats[PLAYER_ID_SELF].bombs == 0:
+                            bombs_available -= 1
+                            if bombs_available == 0:
                                 break
 
         print(game_cmd)
