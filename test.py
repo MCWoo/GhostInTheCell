@@ -230,13 +230,15 @@ class MinFactoryDistances:
 class PlayerStats:
     def __init__(self):
         self.factories = []
-        self.cyborgs = 0
+        self.factory_cyborgs = 0
+        self.troop_cyborgs = 0
         self.cyborg_rate = 0
         self.bombs = 2
 
     def clear(self):
         self.factories.clear()
-        self.cyborgs = 0
+        self.factory_cyborgs = 0
+        self.troop_cyborgs = 0
         self.cyborg_rate = 0
 
 
@@ -276,7 +278,7 @@ class GameState:
 
         if owner in self.player_stats:
             self.player_stats[owner].factories.append(factory_id)
-            self.player_stats[owner].cyborgs += num_cyborgs
+            self.player_stats[owner].factory_cyborgs += num_cyborgs
             self.player_stats[owner].cyborg_rate += cyborg_rate
 
         helper(self.factories[factory_id], owner, num_cyborgs, cyborg_rate)
@@ -292,7 +294,7 @@ class GameState:
 
     # Change or add the data for a given troop
     def update_troop(self, troop_id, owner, num_cyborgs, src, dst, time_left):
-        self.player_stats[owner].cyborgs += num_cyborgs
+        self.player_stats[owner].troop_cyborgs += num_cyborgs
         troop = Troop(troop_id=troop_id,
                       owner=owner,
                       num_cyborgs=num_cyborgs,
@@ -383,7 +385,7 @@ class GameState:
             next_factory = self.perceived_factories[path[k]]
             if self.perceived_factories[path[k-1]].num_cyborgs < cyborgs_needed:
                 print("Error ({})! Not enough cyborgs perceived ({} < {}) at {}! Command({}, {}). Path: {}, Factories: {}"
-                      .format(k, self.perceived_factories[path[k-1]].num_cyborgs, cyborgs_needed, path[k-1], src, dst, path, self.perceived_factories), file=sys.stderr)    # Throw error
+                      .format(k, self.perceived_factories[path[k-1]].num_cyborgs, cyborgs_needed, path[k-1], src, dst, path, self.perceived_factories), file=sys.stderr)
                 break
             if self.perceived_factories[path[k-1]].owner != PLAYER_ID_SELF:    # Throw error
                 print("Error! Looking at factory ({}) that doesn't belong to me! Command({}, {}), Path: {}".format(path[k-1], src, dst, path), file=sys.stderr)
@@ -620,6 +622,26 @@ def game_loop(state, msg_generator):
                             state.add_future_command(src=path[1],
                                                      dst=my_factories[next_factory],
                                                      time_left=state.get_edge(src_factory.id, path[1]))
+
+        if state.player_stats[PLAYER_ID_SELF].bombs > 0:
+            enemy_factories = state.player_stats[PLAYER_ID_OPPONENT].factories
+            mean_rate = state.player_stats[PLAYER_ID_OPPONENT].cyborg_rate / float(len(enemy_factories))
+            mean_cyborgs = (state.player_stats[PLAYER_ID_OPPONENT].factory_cyborgs
+                            + state.player_stats[PLAYER_ID_OPPONENT].troop_cyborgs) / float(len(enemy_factories))
+            if mean_rate > 0:
+                for bomb_target_id in enemy_factories:
+                    target_factory = state.perceived_factories[bomb_target_id]
+                    if target_factory.cyborg_rate >= mean_rate and target_factory.num_cyborgs >= mean_cyborgs:
+                        # Send bomb
+                        possible_sources = [x for x in state.player_stats[PLAYER_ID_SELF].factories
+                                            if "MOVE {} {}".format(x, bomb_target_id) not in game_cmd]
+                        if len(possible_sources):
+                            source = min(state.player_stats[PLAYER_ID_SELF].factories,
+                                         key=lambda x: state.get_edge(x, bomb_target_id))
+                            game_cmd += ";BOMB {} {}".format(source, bomb_target_id)
+                            state.player_stats[PLAYER_ID_SELF].bombs -= 1
+                            if state.player_stats[PLAYER_ID_SELF].bombs == 0:
+                                break
 
         print(game_cmd)
         d = timer.delta(loop_timer)
